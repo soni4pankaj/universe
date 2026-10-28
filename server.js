@@ -346,6 +346,24 @@ app.post('/api/topics/:topicId/bulk-upload', upload.single('file'), async (req, 
 
 // SOCKET.IO REAL-TIME GAME LOGIC
 	io.on('connection', (socket) => {
+
+	// 🛠️ Robust helper to generate clean participant URLs without double slashes
+	function generateJoinUrl(socket, roomId, category, mode, total) {
+	  const reqHost = socket.handshake.headers.host;
+	  const protocol = socket.handshake.headers['x-forwarded-proto'] || 'http';
+	  
+	  // Check all possible environment variables and request headers
+	  let base = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 
+				 (reqHost && !reqHost.includes('localhost') && !reqHost.includes('127.0.0.1') 
+				   ? `${protocol}://${reqHost}` 
+				   : `http://${getLocalIpAddress()}:${PORT}`);
+	  
+	  // Strip ALL trailing slashes from the base URL (prevents any // occurrence)
+	  base = base.replace(/\/+$/, '');
+	  
+	  return `${base}/participant.html?room=${encodeURIComponent(roomId)}&category=${encodeURIComponent(category)}&mode=${encodeURIComponent(mode)}&total=${total}`;
+	}
+
 	  
 	socket.on('create_room', async (data) => {
 		const roomId = typeof data === 'object' ? data.roomId : data;
@@ -356,19 +374,10 @@ app.post('/api/topics/:topicId/bulk-upload', upload.single('file'), async (req, 
 		socket.join(roomId);
 
 		// Determine Host URL safely
-		const reqHost = socket.handshake.headers.host;
-		const protocol = socket.handshake.headers['x-forwarded-proto'] || 'http';
-		const rawBaseUrl = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || (reqHost && !reqHost.includes('localhost') && !reqHost.includes('127.0.0.1') ? `${protocol}://${reqHost}` : `http://${getLocalIpAddress()}:${PORT}`);
-		
-		// Use URL object to prevent double slashes (//) and cleanly append query params
-		const joinUrlObj = new URL('/participant.html', rawBaseUrl);
-		joinUrlObj.searchParams.set('room', roomId);
-		joinUrlObj.searchParams.set('category', category);
-		joinUrlObj.searchParams.set('mode', mode);
-		joinUrlObj.searchParams.set('total', questions.length);
-
-		const qrImage = await QRCode.toDataURL(joinUrlObj.toString());
-
+	// Use the clean helper function
+		const joinUrl = generateJoinUrl(socket, roomId, category, mode, questions.length);
+		const qrImage = await QRCode.toDataURL(joinUrl);
+	
 		rooms[roomId] = {
 		  currentQuestion: 0,
 		  players: {},
@@ -401,19 +410,9 @@ app.post('/api/topics/:topicId/bulk-upload', upload.single('file'), async (req, 
 		  fetchedQuestions = await Question.find({ category: 'default' });
 		}
 
-		// Determine Host URL safely (supporting Render environment variables & headers)
-		const reqHost = socket.handshake.headers.host;
-		const protocol = socket.handshake.headers['x-forwarded-proto'] || 'http';
-		const rawBaseUrl = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || (reqHost && !reqHost.includes('localhost') && !reqHost.includes('127.0.0.1') ? `${protocol}://${reqHost}` : `http://${getLocalIpAddress()}:${PORT}`);
-
-		// Robust URL construction prevents //participant issues regardless of trailing slashes in env vars
-		const joinUrlObj = new URL('/participant.html', rawBaseUrl);
-		joinUrlObj.searchParams.set('room', roomId);
-		joinUrlObj.searchParams.set('category', category);
-		joinUrlObj.searchParams.set('mode', mode);
-		joinUrlObj.searchParams.set('total', fetchedQuestions.length);
-
-		const qrImage = await QRCode.toDataURL(joinUrlObj.toString());
+	// Use the clean helper function
+		const joinUrl = generateJoinUrl(socket, roomId, category, mode, questions.length);
+		const qrImage = await QRCode.toDataURL(joinUrl);
 
 		const existingPlayers = rooms[roomId] ? rooms[roomId].players : {};
 
