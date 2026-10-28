@@ -1,6 +1,61 @@
 // --- Teacher Dashboard & Socket Room Management Script ---
 
-// Global Teacher Dashboard Initialization (Defined at top-level to prevent timing issues)
+
+// Example snippet to include inside your teacher.js on load
+async function loadTeacherData() {
+  try {
+    const response = await fetch('/api/current-user');
+    const data = await response.json();
+    
+    if (data.success && data.user) {
+      const assignedTopics = data.user.assignedTopics || ['default'];
+      
+      // Populate your teacher dashboard topic dropdown or list here
+      const topicSelect = document.getElementById('topicSelect'); // update with your actual element ID
+      if (topicSelect) {
+        topicSelect.innerHTML = '';
+        assignedTopics.forEach(topic => {
+          const option = document.createElement('option');
+          option.value = topic;
+          option.textContent = topic;
+          topicSelect.appendChild(option);
+        });
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load teacher session data:', err);
+  }
+}
+
+// Call this when the teacher dashboard loads
+document.addEventListener('DOMContentLoaded', loadTeacherData);
+
+
+// Fetch latest user details from backend to ensure assigned topics are always up to date
+async function refreshTeacherProfile() {
+  const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+  if (!currentUser.username) return;
+
+  try {
+    const res = await fetch('/api/admin/users');
+    const data = await res.json();
+    if (data.success) {
+      const freshUser = data.users.find(u => u.username === currentUser.username);
+      if (freshUser) {
+        currentUser.assignedTopics = freshUser.assignedTopics || ['default'];
+        localStorage.setItem('currentUser', JSON.stringify(currentUser));
+        
+        if (typeof initTeacherDashboard === 'function') {
+          initTeacherDashboard(currentUser);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Failed to refresh teacher profile:', err);
+  }
+}
+
+// Global Teacher Dashboard Initialization (Restricted to assigned topics only)
 window.initTeacherDashboard = function(user) {
   const topics = user && user.assignedTopics && user.assignedTopics.length > 0 ? user.assignedTopics : ['default'];
 
@@ -22,12 +77,30 @@ window.initTeacherDashboard = function(user) {
     });
   }
 
+  // 3. Update the chapter modal topic selector if present
+  const modalChapterTopic = document.getElementById('modal-chapter-topic');
+  if (modalChapterTopic) {
+    modalChapterTopic.innerHTML = topics.map(t => `<option value="${t}">${t}</option>`).join('');
+  }
+  
+  // 4. Restrict question modal topic dropdown as well
+  const modalQuestionTopic = document.getElementById('modal-question-topic');
+  if (modalQuestionTopic) {
+    modalQuestionTopic.innerHTML = topics.map(t => `<option value="${t}">${t}</option>`).join('');
+  }
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  // Refresh profile details on load to secure latest assigned topics
+  refreshTeacherProfile();
+
   const createRoomBtn = document.getElementById('create-room-btn');
   if (createRoomBtn) {
     const newBtn = createRoomBtn.cloneNode(true);
     createRoomBtn.parentNode.replaceChild(newBtn, createRoomBtn);
 
     newBtn.addEventListener('click', () => {
+      const topicSelect = document.getElementById('teacher-topic-select');
       const selectedTopic = topicSelect ? topicSelect.value : 'default';
       const selectedMode = document.getElementById('teacher-mode-select').value;
       window.currentRoomId = 'room_' + Math.random().toString(36).substring(2, 8);
@@ -43,16 +116,17 @@ window.initTeacherDashboard = function(user) {
         window.socket = io();
       }
 
+      const selectedChapter = document.getElementById('teacher-chapter-select')?.value || null;
+
       socket.emit('create_teacher_room', { 
         roomId: window.currentRoomId, 
         category: selectedTopic, 
-        mode: selectedMode 
+        mode: selectedMode,
+        chapterId: selectedMode.startsWith('chapter_') ? selectedChapter : null
       });
     });
   }
-};
 
-document.addEventListener('DOMContentLoaded', () => {
   // Question Manager Controls Binding
   const showQuestionsBtn = document.getElementById('teacher-show-questions-btn');
   if (showQuestionsBtn) {
@@ -173,7 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       });
 
-	socket.on('teacher_leaderboard_update', (leaderboard) => {
+      socket.on('teacher_leaderboard_update', (leaderboard) => {
         window.latestLeaderboard = leaderboard;
         const countEl = document.getElementById('lobby-student-count');
         if (countEl) countEl.textContent = leaderboard.length;
@@ -207,8 +281,6 @@ document.addEventListener('DOMContentLoaded', () => {
           });
         }
       });
-	  
-	  
 
       socket.on('quiz_ended', () => {
         if (window.latestLeaderboard && window.latestLeaderboard.length > 0) {
@@ -239,8 +311,11 @@ document.addEventListener('DOMContentLoaded', () => {
     questionForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const id = document.getElementById('edit-question-id').value;
-      const manageTopicSelect = document.getElementById('teacher-manage-topic-select');
-      const topic = manageTopicSelect ? manageTopicSelect.value : 'default';
+      const topicSelect = document.getElementById('modal-question-topic');
+      const topic = topicSelect ? topicSelect.value : (document.getElementById('teacher-manage-topic-select')?.value || 'default');
+      const chapterSelect = document.getElementById('modal-question-chapter');
+      const chapterId = chapterSelect ? (chapterSelect.value || null) : null;
+      
       const questionText = document.getElementById('modal-question-text').value;
       const options = [
         document.getElementById('modal-option-0').value,
@@ -250,7 +325,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ];
       const answer = parseInt(document.getElementById('modal-correct-answer').value);
 
-      const payload = { question: questionText, options, answer, category: topic };
+      const payload = { question: questionText, options, answer, category: topic, chapterId };
 
       try {
         const url = id ? `/api/questions/${id}` : `/api/topics/${encodeURIComponent(topic)}/questions`;
@@ -271,6 +346,83 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       } catch (err) {
         alert('Error saving question');
+      }
+    });
+  }
+
+
+  const modeSelect = document.getElementById('teacher-mode-select');
+  const chapterContainer = document.getElementById('chapter-select-container');
+  const topicSelect = document.getElementById('teacher-topic-select');
+
+  if (modeSelect) {
+    modeSelect.addEventListener('change', (e) => {
+      const isChapterMode = e.target.value.startsWith('chapter_');
+      if (chapterContainer) {
+        chapterContainer.classList.toggle('hidden', !isChapterMode);
+      }
+      if (isChapterMode && topicSelect) {
+        updateChapterDropdownForSession(topicSelect.value);
+      }
+    });
+  }
+
+  if (topicSelect) {
+    topicSelect.addEventListener('change', (e) => {
+      if (modeSelect && modeSelect.value.startsWith('chapter_')) {
+        updateChapterDropdownForSession(e.target.value);
+      }
+    });
+  }
+
+  const openChapterBtn = document.getElementById('open-add-chapter-modal-btn');
+  if (openChapterBtn) {
+    openChapterBtn.onclick = () => {
+      document.getElementById('edit-chapter-id').value = '';
+      document.getElementById('chapterForm').reset();
+      
+      const titleEl = document.getElementById('chapter-modal-title');
+      if (titleEl) titleEl.textContent = 'Add Chapter';
+
+      const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+      const topics = currentUser.assignedTopics || ['default'];
+      const modalTopicSelect = document.getElementById('modal-chapter-topic');
+      if (modalTopicSelect) {
+        modalTopicSelect.innerHTML = topics.map(t => `<option value="${t}">${t}</option>`).join('');
+      }
+
+      document.getElementById('chapterModal').classList.remove('hidden');
+    };
+  }
+
+  const chapterForm = document.getElementById('chapterForm');
+  if (chapterForm) {
+    chapterForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const chapterId = document.getElementById('edit-chapter-id').value;
+      const title = document.getElementById('modal-chapter-title').value;
+      const topic = document.getElementById('modal-chapter-topic').value;
+      const content = document.getElementById('modal-chapter-content').value;
+
+      const url = chapterId ? `/api/chapters/${chapterId}` : '/api/chapters';
+      const method = chapterId ? 'PUT' : 'POST';
+
+      try {
+        const res = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, topic, content })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          document.getElementById('chapterModal').classList.add('hidden');
+          loadChapters();
+        } else {
+          alert(data.message || 'Error saving chapter');
+        }
+      } catch (err) {
+        alert('Failed to save chapter');
       }
     });
   }
@@ -310,19 +462,54 @@ async function loadQuestionsForTopic(topic) {
   }
 }
 
-function openQuestionModal(question = null) {
+async function openQuestionModal(question = null) {
   const modal = document.getElementById('questionModal');
   const title = document.getElementById('question-modal-title');
   document.getElementById('edit-question-id').value = question ? (question._id || question.id) : '';
+
+  // Get teacher's assigned topics
+  const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+  const topics = currentUser.assignedTopics && currentUser.assignedTopics.length > 0 ? currentUser.assignedTopics : ['default'];
+  const currentManageTopic = document.getElementById('teacher-manage-topic-select')?.value || topics[0];
+
+  // Populate topic dropdown
+  const topicSelect = document.getElementById('modal-question-topic');
+  if (topicSelect) {
+    topicSelect.innerHTML = topics.map(t => `<option value="${t}" ${t === (question?.category || currentManageTopic) ? 'selected' : ''}>${t}</option>`).join('');
+  }
+
+  // Populate chapter dropdown for selected topic
+  await updateChapterDropdownForModal(topicSelect?.value, question?.chapterId);
+
+  // When teacher changes the topic in modal, update chapter choices dynamically
+  if (topicSelect) {
+    topicSelect.onchange = (e) => updateChapterDropdownForModal(e.target.value);
+  }
+
   document.getElementById('modal-question-text').value = question ? (question.question || question.questionText) : '';
-  
   for (let i = 0; i < 4; i++) {
     document.getElementById(`modal-option-${i}`).value = question && question.options ? question.options[i] : '';
   }
   document.getElementById('modal-correct-answer').value = question ? (question.answer !== undefined ? question.answer : question.correctAnswer) : '0';
-  
+
   title.textContent = question ? 'Edit Question' : 'Add New Question';
   modal.classList.remove('hidden');
+}
+
+async function updateChapterDropdownForModal(topic, selectedChapterId = '') {
+  const chapterSelect = document.getElementById('modal-question-chapter');
+  if (!chapterSelect) return;
+
+  try {
+    const res = await fetch('/api/chapters');
+    const data = await res.json();
+    const chapters = data.success ? data.chapters.filter(c => c.topic === topic) : [];
+
+    chapterSelect.innerHTML = `<option value="">-- General Topic Question --</option>` + 
+      chapters.map(c => `<option value="${c.chapterId}" ${c.chapterId === selectedChapterId ? 'selected' : ''}>${c.title}</option>`).join('');
+  } catch (err) {
+    console.error('Failed to load chapters for question modal:', err);
+  }
 }
 
 function closeQuestionModal() {
@@ -349,7 +536,6 @@ window.deleteQuestion = async function(id) {
     alert('Error deleting question');
   }
 };
-
 
 function showTeacherPodiumModal(leaderboard) {
   const sorted = [...leaderboard].sort((a, b) => {
@@ -420,3 +606,4 @@ function showTeacherPodiumModal(leaderboard) {
 
   document.body.insertAdjacentHTML('beforeend', modalHtml);
 }
+

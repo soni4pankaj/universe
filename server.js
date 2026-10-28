@@ -1,6 +1,7 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, 'atlas-credentials.env') });
 
+const session = require('express-session');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -10,7 +11,6 @@ const os = require('os');
 const mongoose = require('mongoose');
 const multer = require('multer');
 const XLSX = require('xlsx');
-
 
 // Import Mongoose Models
 const User = require('./models/User');
@@ -23,9 +23,35 @@ const io = new Server(server, { cors: { origin: '*' } });
 const PUBLIC_URL = process.env.PUBLIC_URL || '';
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Middleware & Static Files
+// Middleware & Sessions
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your_super_secret_universe_key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { secure: false }
+}));
 app.use(express.json());
-app.use(express.static(__dirname));
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/images', express.static(path.join(__dirname, 'images')));
+app.use('/sounds', express.static(path.join(__dirname, 'sounds')));
+
+// --- AUTHENTICATION GATEKEEPER ---
+function requireTeacherAuth(req, res, next) {
+  if (req.session && req.session.user && (req.session.user.role === 'teacher' || req.session.user.role === 'admin')) {
+    return next();
+  }
+  return res.redirect('/');
+}
+
+// Secure Route for Index Page
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'index.html'));
+});
+
+// Secure Route for Participant Page
+app.get('/participant.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'participant.html'));
+});
 
 let questionTimer = null;
 let questions = [];
@@ -42,9 +68,18 @@ mongoose.connect(process.env.MONGODB_URI)
 const adminRoutes = require('./routes/admin');
 app.use('/api/admin', adminRoutes);
 
-// Teacher dashboard
-app.get('/teacher-dashboard', (req, res) => {
-  res.sendFile(__dirname + '/public/teacher.html');
+// Protected Teacher Dashboard route
+app.get('/teacher-dashboard', requireTeacherAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'teacher.html'));
+});
+
+// Current User Session API
+app.get('/api/current-user', (req, res) => {
+  if (req.session && req.session.user) {
+    res.json({ success: true, user: req.session.user });
+  } else {
+    res.status(401).json({ success: false, message: 'Not authenticated' });
+  }
 });
 
 // 1. Admin: Create a new user with assigned topics array
@@ -122,7 +157,7 @@ app.put('/api/admin/users/:id', async (req, res) => {
   }
 });
 
-// User Login Route
+// User Login Route (Stores user in session)
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   try {
@@ -130,14 +165,17 @@ app.post('/api/login', async (req, res) => {
     if (!user) {
       return res.json({ success: false, message: 'Invalid credentials' });
     }
+
+    req.session.user = {
+      id: user._id,
+      username: user.username,
+      role: user.role,
+      assignedTopics: user.assignedTopics && user.assignedTopics.length > 0 ? user.assignedTopics : ['default']
+    };
+
     res.json({ 
       success: true, 
-      user: { 
-        id: user._id, 
-        username: user.username, 
-        role: user.role, 
-        assignedTopics: user.assignedTopics && user.assignedTopics.length > 0 ? user.assignedTopics : ['default'] 
-      } 
+      user: req.session.user 
     });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Server error' });
@@ -211,7 +249,6 @@ function getSortedLeaderboard(room) {
     return a.totalTime - b.totalTime; // If scores are tied, lower total time comes first
   });
 }
-
 
 function getLocalIpAddress() {
   const interfaces = os.networkInterfaces();
@@ -394,38 +431,40 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('start_teacher_quiz', async (roomId) => {
-    let room = rooms[roomId];
-    if (!room) return;
+	socket.on('start_teacher_quiz', async (roomId) => {
+		let room = rooms[roomId];
+		if (!room) return;
 
-    if (!room.questions || room.questions.length === 0) {
-      room.questions = await Question.find({ category: room.category || 'default' });
-      if (room.questions.length === 0) {
-        room.questions = await Question.find({ category: 'default' });
-      }
-    }
+		if (!room.questions || room.questions.length === 0) {
+		  room.questions = await Question.find({ category: room.category || 'default' });
+		  if (room.questions.length === 0) {
+			room.questions = await Question.find({ category: 'default' });
+		  }
+		}
 
-    room.status = 'active';
-    io.to(roomId).emit('quiz_started', { mode: room.mode, questions: room.questions });
+		room.status = 'active';
+		room.paperStartTime = Date.now(); // 👈 Ensures start time is always captured
+		io.to(roomId).emit('quiz_started', { mode: room.mode, questions: room.questions });
 
-    if (room.mode === 'rapid') {
-      room.currentQuestionIndex = 0;
-      runRapidFireQuestion(roomId);
-    } else if (room.mode === 'paper') {
-      const formattedQuestions = room.questions.map(q => ({
-        question: q.question || q.questionText,
-        options: q.options,
-        answer: q.answer !== undefined ? q.answer : q.correctAnswer
-      }));
+		if (room.mode === 'rapid') {
+		  room.currentQuestionIndex = 0;
+		  runRapidFireQuestion(roomId);
+		} else if (room.mode === 'paper') {
+		  const formattedQuestions = room.questions.map(q => ({
+			question: q.question || q.questionText,
+			options: q.options,
+			answer: q.answer !== undefined ? q.answer : q.correctAnswer
+		  }));
 
-      io.to(roomId).emit('display_paper_quiz', {
-        questions: formattedQuestions,
-		totalQuestions: room.questions.length
-      });
-    }
-  });
+		  io.to(roomId).emit('display_paper_quiz', {
+			questions: formattedQuestions,
+			totalQuestions: room.questions.length
+		  });
+		}
+	  });
+	 
 
-socket.on('submit_rapid_answer', ({ roomId, optionIndex }) => {
+  socket.on('submit_rapid_answer', ({ roomId, optionIndex }) => {
     const room = rooms[roomId];
     if (!room || !room.players[socket.id]) return;
 
@@ -440,7 +479,6 @@ socket.on('submit_rapid_answer', ({ roomId, optionIndex }) => {
 
     const elapsedSeconds = Math.floor((Date.now() - (room.currentQuestionStartTime || Date.now())) / 1000);
     
-    // Add elapsed time to participant's cumulative total time
     room.players[socket.id].totalTime = (room.players[socket.id].totalTime || 0) + elapsedSeconds;
 
     let earnedPoints = 0;
@@ -474,41 +512,51 @@ socket.on('submit_rapid_answer', ({ roomId, optionIndex }) => {
       }, 5000);
     }
   });
-
   
-  socket.on('submit_paper_answers', ({ roomId, answers }) => {
-    const room = rooms[roomId];
-    if (!room || !room.players[socket.id]) return;
+	socket.on('submit_paper_answers', ({ roomId, answers, timeTaken }) => {
+		const room = rooms[roomId];
+		if (!room || !room.players[socket.id]) return;
 
-    let score = 0;
-    room.questions.forEach((q, index) => {
-      const correctAnswer = q.answer !== undefined ? q.answer : q.correctAnswer;
-      if (answers[index] === correctAnswer) {
-        score += 15;
-      }
-    });
+		// Use client-reported timeTaken if available, otherwise calculate from server start time
+		const elapsedSeconds = timeTaken !== undefined ? timeTaken : Math.floor((Date.now() - (room.paperStartTime || Date.now())) / 1000);
+		room.players[socket.id].totalTime = elapsedSeconds;
 
-    room.players[socket.id].score = score;
-    io.to(roomId).emit('lobby_update', { players: Object.values(room.players) });
-    io.to(roomId).emit('teacher_leaderboard_update', getSortedLeaderboard(room));
-    socket.emit('paper_submitted_success', { score, total: room.questions.length });
-  });
+		let score = 0;
+		room.questions.forEach((q, index) => {
+		  const correctAnswer = q.answer !== undefined ? q.answer : q.correctAnswer;
+		  if (answers[index] === correctAnswer) {
+			score += 15; // Paper question points
+		  }
+		});
 
-});
+		room.players[socket.id].score = score;
+
+		// Broadcast updated leaderboard with scores and total times
+		io.to(roomId).emit('lobby_update', { players: Object.values(room.players) });
+		io.to(roomId).emit('teacher_leaderboard_update', getSortedLeaderboard(room));
+		
+		// Send success result back to participant with totalTime
+		socket.emit('paper_submitted_success', { 
+		  score, 
+		  total: room.questions.length,
+		  totalTime: elapsedSeconds 
+		});
+	  });
+  
+
+}); // <--- Fixed: Closed io.on('connection') properly here
 
 function runRapidFireQuestion(roomId) {
   const room = rooms[roomId];
   if (!room || room.status !== 'active') return;
 
-	// Clear tracking set for the new question round
   answeredParticipants.clear();
   
   if (room.currentQuestionIndex >= room.questions.length) {
-	if (questionTimer) clearInterval(questionTimer);
-	  const finalLeaderboard = getSortedLeaderboard(room);
-//    io.to(roomId).emit('teacher_leaderboard_update', getSortedLeaderboard(room));
-	io.to(roomId).emit('teacher_leaderboard_update', finalLeaderboard);
-    io.to(roomId).emit('participant_final_results', finalLeaderboard); // Send final results to participants
+    if (questionTimer) clearInterval(questionTimer);
+    const finalLeaderboard = getSortedLeaderboard(room);
+    io.to(roomId).emit('teacher_leaderboard_update', finalLeaderboard);
+    io.to(roomId).emit('participant_final_results', finalLeaderboard);
 	
     io.to(roomId).emit('quiz_ended');
     room.status = 'ended';
@@ -518,9 +566,9 @@ function runRapidFireQuestion(roomId) {
   const q = room.questions[room.currentQuestionIndex];
   room.currentQuestionIndex++;
 
-	room.currentQuestionStartTime = Date.now(); // Record start timestamp
+  room.currentQuestionStartTime = Date.now();
 
-	io.to(roomId).emit('next_rapid_question', {
+  io.to(roomId).emit('next_rapid_question', {
     questionIndex: room.currentQuestionIndex,
     total: room.questions.length,
     question: q.question || q.questionText,
