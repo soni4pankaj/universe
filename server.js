@@ -1,6 +1,7 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, 'atlas-credentials.env') });
 
+const session = require('express-session');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -10,7 +11,6 @@ const os = require('os');
 const mongoose = require('mongoose');
 const multer = require('multer');
 const XLSX = require('xlsx');
-
 
 // Import Mongoose Models
 const User = require('./models/User');
@@ -23,9 +23,35 @@ const io = new Server(server, { cors: { origin: '*' } });
 const PUBLIC_URL = process.env.PUBLIC_URL || '';
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Middleware & Static Files
+// Middleware & Sessions
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your_super_secret_universe_key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { secure: false }
+}));
 app.use(express.json());
-app.use(express.static(__dirname));
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/images', express.static(path.join(__dirname, 'images')));
+app.use('/sounds', express.static(path.join(__dirname, 'sounds')));
+
+// --- AUTHENTICATION GATEKEEPER ---
+function requireTeacherAuth(req, res, next) {
+  if (req.session && req.session.user && (req.session.user.role === 'teacher' || req.session.user.role === 'admin')) {
+    return next();
+  }
+  return res.redirect('/');
+}
+
+// Secure Route for Index Page
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'index.html'));
+});
+
+// Secure Route for Participant Page
+app.get('/participant.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'participant.html'));
+});
 
 let questionTimer = null;
 let questions = [];
@@ -42,9 +68,18 @@ mongoose.connect(process.env.MONGODB_URI)
 const adminRoutes = require('./routes/admin');
 app.use('/api/admin', adminRoutes);
 
-// Teacher dashboard
-app.get('/teacher-dashboard', (req, res) => {
-  res.sendFile(__dirname + '/public/teacher.html');
+// Protected Teacher Dashboard route
+app.get('/teacher-dashboard', requireTeacherAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'teacher.html'));
+});
+
+// Current User Session API
+app.get('/api/current-user', (req, res) => {
+  if (req.session && req.session.user) {
+    res.json({ success: true, user: req.session.user });
+  } else {
+    res.status(401).json({ success: false, message: 'Not authenticated' });
+  }
 });
 
 // 1. Admin: Create a new user with assigned topics array
@@ -122,7 +157,7 @@ app.put('/api/admin/users/:id', async (req, res) => {
   }
 });
 
-// User Login Route
+// User Login Route (Stores user in session)
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   try {
@@ -130,14 +165,17 @@ app.post('/api/login', async (req, res) => {
     if (!user) {
       return res.json({ success: false, message: 'Invalid credentials' });
     }
+
+    req.session.user = {
+      id: user._id,
+      username: user.username,
+      role: user.role,
+      assignedTopics: user.assignedTopics && user.assignedTopics.length > 0 ? user.assignedTopics : ['default']
+    };
+
     res.json({ 
       success: true, 
-      user: { 
-        id: user._id, 
-        username: user.username, 
-        role: user.role, 
-        assignedTopics: user.assignedTopics && user.assignedTopics.length > 0 ? user.assignedTopics : ['default'] 
-      } 
+      user: req.session.user 
     });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Server error' });
@@ -212,7 +250,6 @@ function getSortedLeaderboard(room) {
   });
 }
 
-
 function getLocalIpAddress() {
   const interfaces = os.networkInterfaces();
   for (const name of Object.keys(interfaces)) {
@@ -263,49 +300,44 @@ app.post('/api/topics/:topicId/questions', async (req, res) => {
 });
 
 // Bulk Upload Endpoint (Supports Excel file upload)
-	// Bulk Upload Endpoint (Supports Excel file upload linked to a chapter or topic)
-	app.post('/api/topics/:topicId/bulk-upload', upload.single('file'), async (req, res) => {
-	  try {
-		const { topicId } = req.params;
-		const { chapterId } = req.body; // Capture chapterId from request
-		let questionsData = [];
+app.post('/api/topics/:topicId/bulk-upload', upload.single('file'), async (req, res) => {
+  try {
+    const { topicId } = req.params;
+    let questionsData = [];
 
-		if (req.file) {
-		  const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-		  const sheetName = workbook.SheetNames[0];
-		  const sheet = workbook.Sheets[sheetName];
-		  const rows = XLSX.utils.sheet_to_json(sheet);
+    if (req.file) {
+      const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet);
 
-		  const lastQuestion = await Question.findOne().sort({ id: -1 });
-		  let nextId = lastQuestion ? lastQuestion.id + 1 : 1;
+      const lastQuestion = await Question.findOne().sort({ id: -1 });
+      let nextId = lastQuestion ? lastQuestion.id + 1 : 1;
 
-		  questionsData = rows.map((row) => ({
-			id: nextId++,
-			question: row.question || row.Question,
-			options: [
-			  row.option1 || row.Option1 || '',
-			  row.option2 || row.Option2 || '',
-			  row.option3 || row.Option3 || '',
-			  row.option4 || row.Option4 || ''
-			],
-			answer: parseInt(row.answer !== undefined ? row.answer : row.Answer),
-			category: topicId,
-		// Pull chapterId from Excel row if present, otherwise fall back to request body dropdown
-			chapterId: row.chapterId || row.ChapterId || chapterId || null
-		}));
-		}
+      questionsData = rows.map((row) => ({
+        id: nextId++,
+        question: row.question || row.Question,
+        options: [
+          row.option1 || row.Option1 || '',
+          row.option2 || row.Option2 || '',
+          row.option3 || row.Option3 || '',
+          row.option4 || row.Option4 || ''
+        ],
+        answer: parseInt(row.answer !== undefined ? row.answer : row.Answer),
+        category: topicId
+      }));
+    }
 
-		if (questionsData.length === 0) {
-		  return res.status(400).json({ success: false, message: 'No valid questions found in uploaded file.' });
-		}
+    if (questionsData.length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid questions found in uploaded file.' });
+    }
 
-		await Question.insertMany(questionsData);
-		res.json({ success: true, message: `Successfully uploaded ${questionsData.length} questions!` });
-	  } catch (err) {
-		res.status(500).json({ success: false, message: 'Failed to process bulk upload: ' + err.message });
-	  }
-	});
-
+    await Question.insertMany(questionsData);
+    res.json({ success: true, message: `Successfully uploaded ${questionsData.length} questions!` });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to process bulk upload: ' + err.message });
+  }
+});
 
 // SOCKET.IO REAL-TIME GAME LOGIC
 io.on('connection', (socket) => {
@@ -356,33 +388,12 @@ io.on('connection', (socket) => {
   });
 
   // --- TEACHER & RAPID-FIRE / PAPER MODE SOCKET HANDLERS ---
-	socket.on('create_teacher_room', async ({ roomId, category, mode, chapterId }) => {
+  socket.on('create_teacher_room', async ({ roomId, category, mode }) => {
     socket.join(roomId);
 
-    let fetchedQuestions = [];
-
-    // 1. If a chapter was selected, look for questions linked to this chapterId
-    if (chapterId) {
-      fetchedQuestions = await Question.find({ chapterId });
-    }
-
-    // 2. Fall back to category/topic questions if no chapter-specific questions found
-    if (fetchedQuestions.length === 0) {
-      fetchedQuestions = await Question.find({ category });
-    }
-
-    // 3. Fall back to default questions if category is also empty
+    let fetchedQuestions = await Question.find({ category });
     if (fetchedQuestions.length === 0) {
       fetchedQuestions = await Question.find({ category: 'default' });
-    }
-
-    // Fetch chapter reading text
-    let chapterText = "Please read the assigned material carefully before the assessment begins.";
-    if (chapterId) {
-      const foundChapter = await Chapter.findOne({ chapterId });
-      if (foundChapter) {
-        chapterText = foundChapter.content;
-      }
     }
 
     const reqHost = socket.handshake.headers.host;
@@ -396,7 +407,6 @@ io.on('connection', (socket) => {
       category,
       mode, 
       questions: fetchedQuestions,
-      chapterText: chapterText,
       currentQuestionIndex: 0,
       players: existingPlayers, 
       answers: {},
@@ -405,8 +415,7 @@ io.on('connection', (socket) => {
 
     socket.emit('room_ready', { qrCode: qrImage, roomId });
   });
-  
-  
+
   socket.on('join_teacher_lobby', ({ roomId, name }) => {
     const room = rooms[roomId];
     if (!room) return socket.emit('error_msg', 'Room not found! Please create the room first.');
@@ -423,57 +432,39 @@ io.on('connection', (socket) => {
   });
 
 	socket.on('start_teacher_quiz', async (roomId) => {
-    let room = rooms[roomId];
-    if (!room) return;
+		let room = rooms[roomId];
+		if (!room) return;
 
-    if (!room.questions || room.questions.length === 0) {
-      room.questions = await Question.find({ category: room.category || 'default' });
-      if (room.questions.length === 0) {
-        room.questions = await Question.find({ category: 'default' });
-      }
-    }
+		if (!room.questions || room.questions.length === 0) {
+		  room.questions = await Question.find({ category: room.category || 'default' });
+		  if (room.questions.length === 0) {
+			room.questions = await Question.find({ category: 'default' });
+		  }
+		}
 
-    // Check if it's a chapter-based mode needing the 5-minute reading timer (300 seconds)
-    if (room.mode === 'chapter_rapid' || room.mode === 'chapter_paper') {
-      room.status = 'reading';
-      io.to(roomId).emit('start_reading_phase', {
-        chapterText: room.chapterText,
-        readingTime: 300 // 300 seconds = 5 minutes
-      });
+		room.status = 'active';
+		room.paperStartTime = Date.now(); // 👈 Ensures start time is always captured
+		io.to(roomId).emit('quiz_started', { mode: room.mode, questions: room.questions });
 
-      // Automatically trigger actual quiz after 5 minutes (300,000 milliseconds)
-      setTimeout(() => {
-        beginActualQuiz(roomId);
-      }, 300000);
-    } else {
-      beginActualQuiz(roomId);
-    }
-  });
+		if (room.mode === 'rapid') {
+		  room.currentQuestionIndex = 0;
+		  runRapidFireQuestion(roomId);
+		} else if (room.mode === 'paper') {
+		  const formattedQuestions = room.questions.map(q => ({
+			question: q.question || q.questionText,
+			options: q.options,
+			answer: q.answer !== undefined ? q.answer : q.correctAnswer
+		  }));
 
-  function beginActualQuiz(roomId) {
-    let room = rooms[roomId];
-    if (!room || room.status === 'active') return;
+		  io.to(roomId).emit('display_paper_quiz', {
+			questions: formattedQuestions,
+			totalQuestions: room.questions.length
+		  });
+		}
+	  });
+	 
 
-    room.status = 'active';
-    io.to(roomId).emit('quiz_started', { mode: room.mode, questions: room.questions });
-
-    if (room.mode === 'rapid' || room.mode === 'chapter_rapid') {
-      room.currentQuestionIndex = 0;
-      runRapidFireQuestion(roomId);
-    } else if (room.mode === 'paper' || room.mode === 'chapter_paper') {
-      const formattedQuestions = room.questions.map(q => ({
-        question: q.question || q.questionText,
-        options: q.options,
-        answer: q.answer !== undefined ? q.answer : q.correctAnswer
-      }));
-
-      io.to(roomId).emit('display_paper_quiz', {
-        questions: formattedQuestions,
-        totalQuestions: room.questions.length
-      });
-    }
-  }
-socket.on('submit_rapid_answer', ({ roomId, optionIndex }) => {
+  socket.on('submit_rapid_answer', ({ roomId, optionIndex }) => {
     const room = rooms[roomId];
     if (!room || !room.players[socket.id]) return;
 
@@ -488,7 +479,6 @@ socket.on('submit_rapid_answer', ({ roomId, optionIndex }) => {
 
     const elapsedSeconds = Math.floor((Date.now() - (room.currentQuestionStartTime || Date.now())) / 1000);
     
-    // Add elapsed time to participant's cumulative total time
     room.players[socket.id].totalTime = (room.players[socket.id].totalTime || 0) + elapsedSeconds;
 
     let earnedPoints = 0;
@@ -522,41 +512,51 @@ socket.on('submit_rapid_answer', ({ roomId, optionIndex }) => {
       }, 5000);
     }
   });
-
   
-  socket.on('submit_paper_answers', ({ roomId, answers }) => {
-    const room = rooms[roomId];
-    if (!room || !room.players[socket.id]) return;
+	socket.on('submit_paper_answers', ({ roomId, answers, timeTaken }) => {
+		const room = rooms[roomId];
+		if (!room || !room.players[socket.id]) return;
 
-    let score = 0;
-    room.questions.forEach((q, index) => {
-      const correctAnswer = q.answer !== undefined ? q.answer : q.correctAnswer;
-      if (answers[index] === correctAnswer) {
-        score += 15;
-      }
-    });
+		// Use client-reported timeTaken if available, otherwise calculate from server start time
+		const elapsedSeconds = timeTaken !== undefined ? timeTaken : Math.floor((Date.now() - (room.paperStartTime || Date.now())) / 1000);
+		room.players[socket.id].totalTime = elapsedSeconds;
 
-    room.players[socket.id].score = score;
-    io.to(roomId).emit('lobby_update', { players: Object.values(room.players) });
-    io.to(roomId).emit('teacher_leaderboard_update', getSortedLeaderboard(room));
-    socket.emit('paper_submitted_success', { score, total: room.questions.length });
-  });
+		let score = 0;
+		room.questions.forEach((q, index) => {
+		  const correctAnswer = q.answer !== undefined ? q.answer : q.correctAnswer;
+		  if (answers[index] === correctAnswer) {
+			score += 15; // Paper question points
+		  }
+		});
 
-});
+		room.players[socket.id].score = score;
+
+		// Broadcast updated leaderboard with scores and total times
+		io.to(roomId).emit('lobby_update', { players: Object.values(room.players) });
+		io.to(roomId).emit('teacher_leaderboard_update', getSortedLeaderboard(room));
+		
+		// Send success result back to participant with totalTime
+		socket.emit('paper_submitted_success', { 
+		  score, 
+		  total: room.questions.length,
+		  totalTime: elapsedSeconds 
+		});
+	  });
+  
+
+}); // <--- Fixed: Closed io.on('connection') properly here
 
 function runRapidFireQuestion(roomId) {
   const room = rooms[roomId];
   if (!room || room.status !== 'active') return;
 
-	// Clear tracking set for the new question round
   answeredParticipants.clear();
   
   if (room.currentQuestionIndex >= room.questions.length) {
-	if (questionTimer) clearInterval(questionTimer);
-	  const finalLeaderboard = getSortedLeaderboard(room);
-//    io.to(roomId).emit('teacher_leaderboard_update', getSortedLeaderboard(room));
-	io.to(roomId).emit('teacher_leaderboard_update', finalLeaderboard);
-    io.to(roomId).emit('participant_final_results', finalLeaderboard); // Send final results to participants
+    if (questionTimer) clearInterval(questionTimer);
+    const finalLeaderboard = getSortedLeaderboard(room);
+    io.to(roomId).emit('teacher_leaderboard_update', finalLeaderboard);
+    io.to(roomId).emit('participant_final_results', finalLeaderboard);
 	
     io.to(roomId).emit('quiz_ended');
     room.status = 'ended';
@@ -566,9 +566,9 @@ function runRapidFireQuestion(roomId) {
   const q = room.questions[room.currentQuestionIndex];
   room.currentQuestionIndex++;
 
-	room.currentQuestionStartTime = Date.now(); // Record start timestamp
+  room.currentQuestionStartTime = Date.now();
 
-	io.to(roomId).emit('next_rapid_question', {
+  io.to(roomId).emit('next_rapid_question', {
     questionIndex: room.currentQuestionIndex,
     total: room.questions.length,
     question: q.question || q.questionText,
@@ -602,42 +602,3 @@ server.listen(PORT, HOST, () => {
   console.log(`Network Join Link: http://${localIP}:${PORT}/participant.html`);
   console.log('----------------------------------------------------');
 });
-
-// Function to automatically create the initial Admin user
-async function seedAdminUser() {
-  try {
-    const adminExists = await User.findOne({ role: 'admin' });
-    if (!adminExists) {
-      await User.create({
-        username: 'admin',
-        password: 'adminpassword', // You can change this to your desired password
-        role: 'admin',
-        assignedTopics: ['default', 'banking', 'finance']
-      });
-      console.log('----------------------------------------------------');
-      console.log('✅ Initial Admin created successfully!');
-      console.log('   Username: admin');
-      console.log('   Password: adminpassword');
-      console.log('----------------------------------------------------');
-    }
-  } catch (err) {
-    console.error('Error seeding admin user:', err);
-  }
-}
-
-
-const chapterRoutes = require('./routes/chapters'); // <-- Add this
-app.use('/api/chapters', chapterRoutes);           // <-- Add this
-
-
-
-// Connect to MongoDB Atlas
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => {
-    console.log('Successfully connected to MongoDB Atlas.');
-    seedAdminUser(); // Call the admin seeder here
-  })
-  .catch((err) => console.error('MongoDB connection error:', err));
-  
-const Chapter = require('./models/Chapter');
-

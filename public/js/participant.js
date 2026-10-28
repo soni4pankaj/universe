@@ -63,40 +63,37 @@ document.addEventListener('DOMContentLoaded', () => {
     roomGameMode = modeParam;
   }
 
-	// 1. Join Room / Register Button Action
-	  if (joinBtn) {
-		joinBtn.addEventListener('click', () => {
-		  const roomId = roomInput.value.trim();
-		  const name = nameInput.value.trim();
+  // 1. Join Room / Register Button Action
+  if (joinBtn) {
+    joinBtn.addEventListener('click', () => {
+      const roomId = roomInput.value.trim();
+      const name = nameInput.value.trim();
 
-		  if (!roomId) {
-			errorMsg.textContent = 'Invalid room link. Please re-scan the QR code!';
-			return;
-		  }
+      if (!roomId) {
+        errorMsg.textContent = 'Invalid room link. Please re-scan the QR code!';
+        return;
+      }
 
-		  if (!name) {
-			errorMsg.textContent = 'Please enter your name!';
-			return;
-		  }
+      if (!name) {
+        errorMsg.textContent = 'Please enter your name!';
+        return;
+      }
 
-		  if (bgMusic) {
-			bgMusic.volume = 1.0;
-			bgMusic.play().catch(err => console.log('Autoplay prevented:', err));
-		  }
+      if (bgMusic) {
+        bgMusic.volume = 1.0;
+        bgMusic.play().catch(err => console.log('Autoplay prevented:', err));
+      }
 
-		  currentRoomId = roomId;
+      currentRoomId = roomId;
 
-		  socket.emit('join_room', { roomId, name });
-		  socket.emit('join_teacher_lobby', { roomId, name });
+      // Emit join_room for participants
+      socket.emit('join_room', { roomId, name });
 
-		  playerDisplayName.textContent = name;
-		  joinBox.classList.add('hidden');
-		  waitingBox.classList.remove('hidden');
-		});
-	  }
-  
-  
-  
+      playerDisplayName.textContent = name;
+      joinBox.classList.add('hidden');
+      waitingBox.classList.remove('hidden');
+    });
+  }
 
   // 2. Successful Join Listeners
   socket.on('lobby_update', () => {
@@ -273,7 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   });
 
-  socket.on('paper_submitted_success', ({ score, total }) => {
+  socket.on('paper_submitted_success', ({ score, total, totalTime }) => {
     if (paperInterval) clearInterval(paperInterval);
     if (paperTimerContainer) paperTimerContainer.classList.add('hidden');
 
@@ -286,10 +283,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const myScoreEl = document.getElementById('my-score');
     if (myScoreEl) myScoreEl.textContent = score;
 
-    answerStatus.textContent = `Quiz Completed! You scored ${score} out of ${total * 10} points.`;
+    answerStatus.textContent = `Quiz Completed! You scored ${score} points in ${totalTime || 0} seconds.`;
     
     const scoreboardTitle = document.getElementById('scoreboard-title');
-    if (scoreboardTitle) scoreboardTitle.textContent = "🎉 Paper Exam Finished! 🎉";
+    if (scoreboardTitle) scoreboardTitle.textContent = `🎉 Paper Exam Finished! (${totalTime || 0}s) 🎉`;
   });
 
   // 4. Answer Confirmation & Audio SFX Feedbacks
@@ -311,48 +308,44 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-	socket.on('answer_feedback', ({ correct, score }) => {
-		if (correct) {
-		  answerStatus.textContent = 'Correct Answer! 🎉 (+15 pts)';
-		  playSoundEffect(correctSfx);
-		  if (selectedBtnRef) {
-			selectedBtnRef.style.backgroundColor = '#28a745';
-			selectedBtnRef.style.color = '#fff';
-		  }
-		} else {
-		  answerStatus.textContent = 'Incorrect Answer! ❌';
-		  playSoundEffect(wrongSfx);
-		  if (selectedBtnRef) {
-			selectedBtnRef.style.backgroundColor = '#dc3545';
-			selectedBtnRef.style.color = '#fff';
-		  }
-		}
+  socket.on('answer_feedback', ({ correct, score }) => {
+    if (correct) {
+      answerStatus.textContent = 'Correct Answer! 🎉 (+15 pts)';
+      playSoundEffect(correctSfx);
+      if (selectedBtnRef) {
+        selectedBtnRef.style.backgroundColor = '#28a745';
+        selectedBtnRef.style.color = '#fff';
+      }
+    } else {
+      answerStatus.textContent = 'Incorrect Answer! ❌';
+      playSoundEffect(wrongSfx);
+      if (selectedBtnRef) {
+        selectedBtnRef.style.backgroundColor = '#dc3545';
+        selectedBtnRef.style.color = '#fff';
+      }
+    }
 
-		// Update both the live question view score and scoreboard view score
-		const liveScoreEl = document.getElementById('live-my-score');
-		if (liveScoreEl && score !== undefined) {
-		  liveScoreEl.textContent = score;
-		}
+    const liveScoreEl = document.getElementById('live-my-score');
+    if (liveScoreEl && score !== undefined) {
+      liveScoreEl.textContent = score;
+    }
 
-		const myScoreEl = document.getElementById('my-score');
-		if (myScoreEl && score !== undefined) {
-		  myScoreEl.textContent = score;
-		}
-	  });
-  
+    const myScoreEl = document.getElementById('my-score');
+    if (myScoreEl && score !== undefined) {
+      myScoreEl.textContent = score;
+    }
+  });
 
-	socket.on('timer_tick', (timeLeft) => {
-		if (!paperInterval) {
-		  timerDisplay.textContent = timeLeft;
-		  
-		  // If time runs out, disable options immediately
-		  if (timeLeft <= 0) {
-			disableAllOptions();
-			answerStatus.textContent = "Time's up! Waiting for next question...";
-		  }
-		}
-	  });
-  
+  socket.on('timer_tick', (timeLeft) => {
+    if (!paperInterval) {
+      timerDisplay.textContent = timeLeft;
+      
+      if (timeLeft <= 0) {
+        disableAllOptions();
+        answerStatus.textContent = "Time's up! Waiting for next question...";
+      }
+    }
+  });
 
   socket.on('quiz_ended', () => {
     if (paperInterval) clearInterval(paperInterval);
@@ -365,8 +358,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   socket.on('participant_final_results', (leaderboard) => {
-	console.log("Received final leaderboard:", leaderboard); // Check your browser console (F12) to see if this logs!
-	  
     if (paperInterval) clearInterval(paperInterval);
     if (paperTimerContainer) paperTimerContainer.classList.add('hidden');
 
@@ -377,7 +368,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const manualNotice = document.getElementById('manual-wait-notice');
     if (manualNotice) manualNotice.classList.add('hidden');
 
-    // Find current participant's rank and stats
     const myIndex = leaderboard.findIndex(p => p.id === socket.id);
     const me = leaderboard[myIndex] || { score: 0, totalTime: 0 };
 
@@ -387,7 +377,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const scoreboardTitle = document.getElementById('scoreboard-title');
     if (scoreboardTitle) scoreboardTitle.textContent = `🎉 Quiz Completed! You finished at Rank #${myIndex + 1} 🎉`;
 
-    // Render full winner ranking list for participants
     scoreList.innerHTML = leaderboard.map((p, index) => {
       const isMe = p.id === socket.id;
       let rankIcon = `#${index + 1}`;

@@ -1,5 +1,5 @@
 {
-  "name": "fraud-quiz",
+  "name": "universe",
   "version": "1.0.0",
   "description": "",
   "main": "server.js",
@@ -14,6 +14,7 @@
   "dependencies": {
     "dotenv": "^18.0.6",
     "express": "^5.2.1",
+    "express-session": "^1.19.0",
     "mongoose": "^9.11.1",
     "multer": "^2.4.0",
     "qrcode": "^1.5.4",
