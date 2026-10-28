@@ -345,34 +345,40 @@ app.post('/api/topics/:topicId/bulk-upload', upload.single('file'), async (req, 
 });
 
 // SOCKET.IO REAL-TIME GAME LOGIC
-io.on('connection', (socket) => {
+	io.on('connection', (socket) => {
+	  
+	socket.on('create_room', async (data) => {
+		const roomId = typeof data === 'object' ? data.roomId : data;
+		const mode = typeof data === 'object' ? data.mode : 'manual';
+		const category = typeof data === 'object' ? data.category || 'default' : 'default';
+
+		questions = await Question.find({ category }).sort({ id: 1 });
+		socket.join(roomId);
+
+		// Determine Host URL safely
+		const reqHost = socket.handshake.headers.host;
+		const protocol = socket.handshake.headers['x-forwarded-proto'] || 'http';
+		const rawBaseUrl = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || (reqHost && !reqHost.includes('localhost') && !reqHost.includes('127.0.0.1') ? `${protocol}://${reqHost}` : `http://${getLocalIpAddress()}:${PORT}`);
+		
+		// Use URL object to prevent double slashes (//) and cleanly append query params
+		const joinUrlObj = new URL('/participant.html', rawBaseUrl);
+		joinUrlObj.searchParams.set('room', roomId);
+		joinUrlObj.searchParams.set('category', category);
+		joinUrlObj.searchParams.set('mode', mode);
+		joinUrlObj.searchParams.set('total', questions.length);
+
+		const qrImage = await QRCode.toDataURL(joinUrlObj.toString());
+
+		rooms[roomId] = {
+		  currentQuestion: 0,
+		  players: {},
+		  answers: {},
+		  mode: mode
+		};
+
+		socket.emit('room_created', { roomId, qrCode: qrImage });
+	  });
   
-  socket.on('create_room', async (data) => {
-    const roomId = typeof data === 'object' ? data.roomId : data;
-    const mode = typeof data === 'object' ? data.mode : 'manual';
-
-    questions = await Question.find().sort({ id: 1 });
-    socket.join(roomId);
-
-    // Determine Host URL safely and clean trailing slashes to prevent double //
-    const reqHost = socket.handshake.headers.host;
-    const protocol = socket.handshake.headers['x-forwarded-proto'] || 'http';
-    const rawBaseUrl = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || (reqHost && !reqHost.includes('localhost') && !reqHost.includes('127.0.0.1') ? `${protocol}://${reqHost}` : `http://${getLocalIpAddress()}:${PORT}`);
-    
-    const cleanBaseUrl = rawBaseUrl.replace(/\/+$/, '');
-    const joinUrl = `${cleanBaseUrl}/participant.html?room=${roomId}&category=${encodeURIComponent(category)}&mode=${mode}&total=${fetchedQuestions.length}`;
-
-    const qrImage = await QRCode.toDataURL(joinUrl);
-
-    rooms[roomId] = {
-      currentQuestion: 0,
-      players: {},
-      answers: {},
-      mode: mode
-    };
-
-    socket.emit('room_created', { roomId, qrCode: qrImage });
-  });
 
   socket.on('join_room', ({ roomId, name }) => {
     const room = rooms[roomId];
@@ -387,37 +393,43 @@ io.on('connection', (socket) => {
   });
 
   // --- TEACHER & RAPID-FIRE / PAPER MODE SOCKET HANDLERS ---
-  socket.on('create_teacher_room', async ({ roomId, category, mode }) => {
-    socket.join(roomId);
+	socket.on('create_teacher_room', async ({ roomId, category, mode }) => {
+		socket.join(roomId);
 
-    let fetchedQuestions = await Question.find({ category });
-    if (fetchedQuestions.length === 0) {
-      fetchedQuestions = await Question.find({ category: 'default' });
-    }
+		let fetchedQuestions = await Question.find({ category });
+		if (fetchedQuestions.length === 0) {
+		  fetchedQuestions = await Question.find({ category: 'default' });
+		}
 
-    const reqHost = socket.handshake.headers.host;
-    let baseUrl = process.env.PUBLIC_URL || `http://${getLocalIpAddress()}:${PORT}`;
-	
-	// 🛠️ Clean trailing slashes to prevent double slashes in URL
-    baseUrl = baseUrl.replace(/\/+$/, '');
-	
-    const joinUrl = `${baseUrl}/participant.html?room=${roomId}&category=${category}&mode=${mode}&total=${fetchedQuestions.length}`;
-    const qrImage = await QRCode.toDataURL(joinUrl);
+		// Determine Host URL safely (supporting Render environment variables & headers)
+		const reqHost = socket.handshake.headers.host;
+		const protocol = socket.handshake.headers['x-forwarded-proto'] || 'http';
+		const rawBaseUrl = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || (reqHost && !reqHost.includes('localhost') && !reqHost.includes('127.0.0.1') ? `${protocol}://${reqHost}` : `http://${getLocalIpAddress()}:${PORT}`);
 
-    const existingPlayers = rooms[roomId] ? rooms[roomId].players : {};
+		// Robust URL construction prevents //participant issues regardless of trailing slashes in env vars
+		const joinUrlObj = new URL('/participant.html', rawBaseUrl);
+		joinUrlObj.searchParams.set('room', roomId);
+		joinUrlObj.searchParams.set('category', category);
+		joinUrlObj.searchParams.set('mode', mode);
+		joinUrlObj.searchParams.set('total', fetchedQuestions.length);
 
-    rooms[roomId] = {
-      category,
-      mode, 
-      questions: fetchedQuestions,
-      currentQuestionIndex: 0,
-      players: existingPlayers, 
-      answers: {},
-      status: 'waiting'
-    };
+		const qrImage = await QRCode.toDataURL(joinUrlObj.toString());
 
-    socket.emit('room_ready', { qrCode: qrImage, roomId });
-  });
+		const existingPlayers = rooms[roomId] ? rooms[roomId].players : {};
+
+		rooms[roomId] = {
+		  category,
+		  mode, 
+		  questions: fetchedQuestions,
+		  currentQuestionIndex: 0,
+		  players: existingPlayers, 
+		  answers: {},
+		  status: 'waiting'
+		};
+
+		socket.emit('room_ready', { qrCode: qrImage, roomId });
+	  });
+  
 
   socket.on('join_teacher_lobby', ({ roomId, name }) => {
     const room = rooms[roomId];
