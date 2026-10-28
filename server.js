@@ -362,6 +362,9 @@ io.on('connection', (socket) => {
       baseUrl = `http://${localIP}:${PORT}`;
     }
 
+	// 🛠️ Clean trailing slashes to prevent double slashes in URL
+    baseUrl = baseUrl.replace(/\/+$/, '');
+	
     const joinUrl = `${baseUrl}/participant.html?room=${roomId}`;
     const qrImage = await QRCode.toDataURL(joinUrl);
 
@@ -398,6 +401,10 @@ io.on('connection', (socket) => {
 
     const reqHost = socket.handshake.headers.host;
     let baseUrl = process.env.PUBLIC_URL || `http://${getLocalIpAddress()}:${PORT}`;
+	
+	// 🛠️ Clean trailing slashes to prevent double slashes in URL
+    baseUrl = baseUrl.replace(/\/+$/, '');
+	
     const joinUrl = `${baseUrl}/participant.html?room=${roomId}&category=${category}&mode=${mode}&total=${fetchedQuestions.length}`;
     const qrImage = await QRCode.toDataURL(joinUrl);
 
