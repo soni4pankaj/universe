@@ -53,6 +53,11 @@ app.get('/participant.html', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'participant.html'));
 });
 
+app.get('/participant', (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'participant.html'));
+});
+
+
 let questionTimer = null;
 let questions = [];
 const rooms = {};
