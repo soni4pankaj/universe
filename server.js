@@ -349,23 +349,14 @@ io.on('connection', (socket) => {
     questions = await Question.find().sort({ id: 1 });
     socket.join(roomId);
 
+    // Determine Host URL safely and clean trailing slashes to prevent double //
     const reqHost = socket.handshake.headers.host;
-    let baseUrl;
+    const protocol = socket.handshake.headers['x-forwarded-proto'] || 'http';
+    const rawBaseUrl = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || (reqHost && !reqHost.includes('localhost') && !reqHost.includes('127.0.0.1') ? `${protocol}://${reqHost}` : `http://${getLocalIpAddress()}:${PORT}`);
+    
+    const cleanBaseUrl = rawBaseUrl.replace(/\/+$/, '');
+    const joinUrl = `${cleanBaseUrl}/participant.html?room=${roomId}&category=${encodeURIComponent(category)}&mode=${mode}&total=${fetchedQuestions.length}`;
 
-    if (process.env.PUBLIC_URL) {
-      baseUrl = process.env.PUBLIC_URL;
-    } else if (reqHost && !reqHost.includes('localhost') && !reqHost.includes('127.0.0.1')) {
-      const protocol = socket.handshake.headers['x-forwarded-proto'] || 'https';
-      baseUrl = `${protocol}://${reqHost}`;
-    } else {
-      const localIP = getLocalIpAddress();
-      baseUrl = `http://${localIP}:${PORT}`;
-    }
-
-	// 🛠️ Clean trailing slashes to prevent double slashes in URL
-    baseUrl = baseUrl.replace(/\/+$/, '');
-	
-    const joinUrl = `${baseUrl}/participant.html?room=${roomId}`;
     const qrImage = await QRCode.toDataURL(joinUrl);
 
     rooms[roomId] = {
