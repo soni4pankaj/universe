@@ -424,8 +424,32 @@ io.on('connection', (socket) => {
       status: 'waiting'
     };
 
-    socket.emit('room_ready', { qrCode: qrImage, roomId });
+	// Inside socket.on('create_teacher_room', ...)
+	socket.emit('room_ready', { qrCode: qrImage, joinUrl, roomId });
+
   });
+
+	socket.on('room_ready', ({ qrCode, joinUrl, roomId }) => {
+	  const qrImg = document.getElementById('lobby-qr-img');
+	  const lobbyCard = document.getElementById('teacher-lobby-card');
+	  const urlInput = document.getElementById('lobby-join-url-input');
+	  const copyBtn = document.getElementById('copy-join-url-btn');
+
+	  if (qrImg) qrImg.src = qrCode;
+	  if (urlInput && joinUrl) urlInput.value = joinUrl;
+	  if (lobbyCard) lobbyCard.classList.remove('hidden');
+
+	  if (copyBtn && urlInput) {
+		copyBtn.onclick = () => {
+		  navigator.clipboard.writeText(urlInput.value).then(() => {
+			copyBtn.textContent = 'Copied! ✓';
+			setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+		  });
+		};
+	  }
+	});
+
+
 
   socket.on('join_teacher_lobby', ({ roomId, name }) => {
     const room = rooms[roomId];

@@ -96,26 +96,50 @@
       </div>
 
       <!-- QR Lobby & Connected Students -->
-      <div id="teacher-lobby-card" class="hidden bg-slate-900/40 p-6 rounded-3xl border border-white/10 backdrop-blur-xl flex flex-col items-center justify-center text-center space-y-4">
-        <div id="qr-code-section" class="space-y-3 w-full flex flex-col items-center">
-          <h2 class="text-lg font-semibold text-white">Student Lobby QR Code</h2>
-          <p class="text-xs text-slate-400">Students scan this code to join your room:</p>
-          <div class="p-3 bg-white rounded-2xl shadow-xl">
-            <img id="lobby-qr-img" src="" alt="Room QR Code" class="w-36 h-36 object-contain">
-          </div>
-        </div>
+		<!-- QR Lobby & Connected Students -->
+		<div id="teacher-lobby-card" class="hidden bg-slate-900/40 p-6 rounded-3xl border border-white/10 backdrop-blur-xl flex flex-col items-center justify-center text-center space-y-4">
+		  <div id="qr-code-section" class="space-y-3 w-full flex flex-col items-center">
+			<h2 class="text-lg font-semibold text-white">Student Lobby QR Code</h2>
+			<p class="text-xs text-slate-400">Students scan this code or use the link below to join:</p>
+			
+			<!-- QR Image -->
+			<div class="p-3 bg-white rounded-2xl shadow-xl">
+			  <img id="lobby-qr-img" src="" alt="Room QR Code" class="w-36 h-36 object-contain">
+			</div>
 
-        <div class="w-full space-y-3 pt-2 border-t border-white/10">
-          <div class="text-xs text-purple-300 font-medium">
-            Joined Students: <span id="lobby-student-count" class="font-bold text-white">0</span>
-          </div>
-          <ul id="lobby-student-list" class="text-xs text-slate-300 flex flex-wrap gap-2 justify-center max-h-20 overflow-y-auto"></ul>
-          <button id="start-quiz-session-btn" class="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-lg shadow-emerald-600/30 transition-all">
-            Start Quiz for All Students
-          </button>
-        </div>
-      </div>
-    </div>
+			<!-- 🌟 NEW: URL Display & Copy Box -->
+			<div class="w-full max-w-md pt-2">
+			  <label class="block text-[11px] text-slate-400 font-medium mb-1 text-left">Session Link:</label>
+			  <div class="flex items-center gap-2">
+				<input 
+				  type="text" 
+				  id="lobby-join-url-input" 
+				  readonly 
+				  class="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-xs text-purple-200 focus:outline-none select-all" 
+				  placeholder="Generating link..."
+				/>
+				<button 
+				  id="copy-join-url-btn" 
+				  type="button" 
+				  class="px-3 py-2 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/30 text-xs font-semibold whitespace-nowrap transition-all"
+				>
+				  Copy
+				</button>
+			  </div>
+			</div>
+		  </div>
+
+		  <div class="w-full space-y-3 pt-2 border-t border-white/10">
+			<div class="text-xs text-purple-300 font-medium">
+			  Joined Students: <span id="lobby-student-count" class="font-bold text-white">0</span>
+			</div>
+			<ul id="lobby-student-list" class="text-xs text-slate-300 flex flex-wrap gap-2 justify-center max-h-20 overflow-y-auto"></ul>
+			<button id="start-quiz-session-btn" class="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-lg shadow-emerald-600/30 transition-all">
+			  Start Quiz for All Students
+			</button>
+		  </div>
+		</div>
+
 
     <!-- Teacher Question Management Section -->
     <div class="bg-slate-900/40 p-6 rounded-3xl border border-white/10 backdrop-blur-xl space-y-4">
