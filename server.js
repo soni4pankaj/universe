@@ -52,13 +52,10 @@ app.get('/', (req, res) => {
 app.get('/participant.html', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'participant.html'));
 });
-<<<<<<< HEAD
-=======
 
 app.get('/participant', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'participant.html'));
 });
->>>>>>> be935e4
 
 let questionTimer = null;
 let questions = [];
@@ -346,19 +343,23 @@ app.post('/api/topics/:topicId/bulk-upload', upload.single('file'), async (req, 
   }
 });
 
-// 🛠️ Robust URL Builder matching the working Competition project implementation
+// 🛠️ Bulletproof URL Builder using native URL object (Impossible to have double slashes)
 function getBaseUrl(socket) {
   const reqHost = socket.handshake.headers.host;
   let rawProto = socket.handshake.headers['x-forwarded-proto'] || 'http';
   let protocol = rawProto.split(',')[0].trim();
   protocol = protocol.replace(/:\/\/?$/, '').replace(/\/+$/, '');
 
-  const rawBase = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 
+  let rawBase = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 
                   (reqHost && !reqHost.includes('localhost') && !reqHost.includes('127.0.0.1') 
                     ? `${protocol}://${reqHost}` 
                     : `http://${getLocalIpAddress()}:${PORT}`);
 
-  return rawBase.replace(/\/+$/, '');
+  rawBase = rawBase.replace(/\/+$/, '');
+
+  // Native URL constructor completely normalizes slashes automatically
+  const targetUrl = new URL('/participant.html', rawBase);
+  return targetUrl.toString();
 }
 
 // SOCKET.IO REAL-TIME GAME LOGIC
@@ -372,11 +373,15 @@ io.on('connection', (socket) => {
     questions = await Question.find({ category }).sort({ id: 1 });
     socket.join(roomId);
 
-    // Clean URL generation matching competition project layout
     const baseUrl = getBaseUrl(socket);
-    const joinUrl = `${baseUrl}/participant.html?room=${roomId}&category=${encodeURIComponent(category)}&mode=${mode}&total=${questions.length}`;
-    
-    const qrImage = await QRCode.toDataURL(joinUrl);
+    const joinUrl = new URL(baseUrl);
+    joinUrl.searchParams.set('room', roomId);
+    joinUrl.searchParams.set('category', category);
+    joinUrl.searchParams.set('mode', mode);
+    joinUrl.searchParams.set('total', questions.length);
+
+    const finalJoinUrl = joinUrl.toString();
+    const qrImage = await QRCode.toDataURL(finalJoinUrl);
   
     rooms[roomId] = {
       currentQuestion: 0,
@@ -409,11 +414,15 @@ io.on('connection', (socket) => {
       fetchedQuestions = await Question.find({ category: 'default' });
     }
 
-    // Clean URL generation matching competition project layout
     const baseUrl = getBaseUrl(socket);
-    const joinUrl = `${baseUrl}/participant.html?room=${roomId}&category=${encodeURIComponent(category)}&mode=${mode}&total=${fetchedQuestions.length}`;
-    
-    const qrImage = await QRCode.toDataURL(joinUrl);
+    const joinUrl = new URL(baseUrl);
+    joinUrl.searchParams.set('room', roomId);
+    joinUrl.searchParams.set('category', category);
+    joinUrl.searchParams.set('mode', mode);
+    joinUrl.searchParams.set('total', fetchedQuestions.length);
+
+    const finalJoinUrl = joinUrl.toString();
+    const qrImage = await QRCode.toDataURL(finalJoinUrl);
 
     const existingPlayers = rooms[roomId] ? rooms[roomId].players : {};
 
@@ -427,32 +436,8 @@ io.on('connection', (socket) => {
       status: 'waiting'
     };
 
-	// Inside socket.on('create_teacher_room', ...)
-	socket.emit('room_ready', { qrCode: qrImage, joinUrl, roomId });
-
+    socket.emit('room_ready', { qrCode: qrImage, joinUrl: finalJoinUrl, roomId });
   });
-
-	socket.on('room_ready', ({ qrCode, joinUrl, roomId }) => {
-	  const qrImg = document.getElementById('lobby-qr-img');
-	  const lobbyCard = document.getElementById('teacher-lobby-card');
-	  const urlInput = document.getElementById('lobby-join-url-input');
-	  const copyBtn = document.getElementById('copy-join-url-btn');
-
-	  if (qrImg) qrImg.src = qrCode;
-	  if (urlInput && joinUrl) urlInput.value = joinUrl;
-	  if (lobbyCard) lobbyCard.classList.remove('hidden');
-
-	  if (copyBtn && urlInput) {
-		copyBtn.onclick = () => {
-		  navigator.clipboard.writeText(urlInput.value).then(() => {
-			copyBtn.textContent = 'Copied! ✓';
-			setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
-		  });
-		};
-	  }
-	});
-
-
 
   socket.on('join_teacher_lobby', ({ roomId, name }) => {
     const room = rooms[roomId];
@@ -469,53 +454,37 @@ io.on('connection', (socket) => {
     });
   });
 
-	socket.on('start_teacher_quiz', async (roomId) => {
-		let room = rooms[roomId];
-		if (!room) return;
+  socket.on('start_teacher_quiz', async (roomId) => {
+    let room = rooms[roomId];
+    if (!room) return;
 
-		if (!room.questions || room.questions.length === 0) {
-		  room.questions = await Question.find({ category: room.category || 'default' });
-		  if (room.questions.length === 0) {
-			room.questions = await Question.find({ category: 'default' });
-		  }
-		}
+    if (!room.questions || room.questions.length === 0) {
+      room.questions = await Question.find({ category: room.category || 'default' });
+      if (room.questions.length === 0) {
+        room.questions = await Question.find({ category: 'default' });
+      }
+    }
 
-<<<<<<< HEAD
-		room.status = 'active';
-		room.paperStartTime = Date.now(); // 👈 Ensures start time is always captured
-		io.to(roomId).emit('quiz_started', { mode: room.mode, questions: room.questions });
-=======
     room.status = 'active';
     room.paperStartTime = Date.now();
     io.to(roomId).emit('quiz_started', { mode: room.mode, questions: room.questions });
->>>>>>> be935e4
 
-		if (room.mode === 'rapid') {
-		  room.currentQuestionIndex = 0;
-		  runRapidFireQuestion(roomId);
-		} else if (room.mode === 'paper') {
-		  const formattedQuestions = room.questions.map(q => ({
-			question: q.question || q.questionText,
-			options: q.options,
-			answer: q.answer !== undefined ? q.answer : q.correctAnswer
-		  }));
+    if (room.mode === 'rapid') {
+      room.currentQuestionIndex = 0;
+      runRapidFireQuestion(roomId);
+    } else if (room.mode === 'paper') {
+      const formattedQuestions = room.questions.map(q => ({
+        question: q.question || q.questionText,
+        options: q.options,
+        answer: q.answer !== undefined ? q.answer : q.correctAnswer
+      }));
 
-<<<<<<< HEAD
-		  io.to(roomId).emit('display_paper_quiz', {
-			questions: formattedQuestions,
-			totalQuestions: room.questions.length
-		  });
-		}
-	  });
-	 
-=======
       io.to(roomId).emit('display_paper_quiz', {
         questions: formattedQuestions,
         totalQuestions: room.questions.length
       });
     }
   });
->>>>>>> be935e4
 
   socket.on('submit_rapid_answer', ({ roomId, optionIndex }) => {
     const room = rooms[roomId];
@@ -566,23 +535,6 @@ io.on('connection', (socket) => {
     }
   });
   
-<<<<<<< HEAD
-	socket.on('submit_paper_answers', ({ roomId, answers, timeTaken }) => {
-		const room = rooms[roomId];
-		if (!room || !room.players[socket.id]) return;
-
-		// Use client-reported timeTaken if available, otherwise calculate from server start time
-		const elapsedSeconds = timeTaken !== undefined ? timeTaken : Math.floor((Date.now() - (room.paperStartTime || Date.now())) / 1000);
-		room.players[socket.id].totalTime = elapsedSeconds;
-
-		let score = 0;
-		room.questions.forEach((q, index) => {
-		  const correctAnswer = q.answer !== undefined ? q.answer : q.correctAnswer;
-		  if (answers[index] === correctAnswer) {
-			score += 15; // Paper question points
-		  }
-		});
-=======
   socket.on('submit_paper_answers', ({ roomId, answers, timeTaken }) => {
     const room = rooms[roomId];
     if (!room || !room.players[socket.id]) return;
@@ -609,24 +561,8 @@ io.on('connection', (socket) => {
       totalTime: elapsedSeconds 
     });
   });
->>>>>>> be935e4
 
-		room.players[socket.id].score = score;
-
-		// Broadcast updated leaderboard with scores and total times
-		io.to(roomId).emit('lobby_update', { players: Object.values(room.players) });
-		io.to(roomId).emit('teacher_leaderboard_update', getSortedLeaderboard(room));
-		
-		// Send success result back to participant with totalTime
-		socket.emit('paper_submitted_success', { 
-		  score, 
-		  total: room.questions.length,
-		  totalTime: elapsedSeconds 
-		});
-	  });
-  
-
-}); // <--- Fixed: Closed io.on('connection') properly here
+});
 
 function runRapidFireQuestion(roomId) {
   const room = rooms[roomId];
@@ -639,11 +575,7 @@ function runRapidFireQuestion(roomId) {
     const finalLeaderboard = getSortedLeaderboard(room);
     io.to(roomId).emit('teacher_leaderboard_update', finalLeaderboard);
     io.to(roomId).emit('participant_final_results', finalLeaderboard);
-<<<<<<< HEAD
-	
-=======
     
->>>>>>> be935e4
     io.to(roomId).emit('quiz_ended');
     room.status = 'ended';
     return;
