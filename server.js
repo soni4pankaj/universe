@@ -361,7 +361,7 @@ app.post('/api/topics/:topicId/bulk-upload', upload.single('file'), async (req, 
 	  console.log(`Before:${base}`);
 	  base = base.replace(/\/+$/, '');
 	 console.log(`After:${base}`);
-	  return `${base}participant.html?room=${encodeURIComponent(roomId)}&category=${encodeURIComponent(category)}&mode=${encodeURIComponent(mode)}&total=${total}`;
+	  return `${base}/participant.html?room=${encodeURIComponent(roomId)}&category=${encodeURIComponent(category)}&mode=${encodeURIComponent(mode)}&total=${total}`;
 	}
 	
 // SOCKET.IO REAL-TIME GAME LOGIC
