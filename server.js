@@ -359,9 +359,10 @@ app.post('/api/topics/:topicId/bulk-upload', upload.single('file'), async (req, 
 				   : `http://${getLocalIpAddress()}:${PORT}`);
 	  
 	  // Strip ALL trailing slashes from the base URL (prevents any // occurrence)
+	  console.log(`Before:${base}`);
 	  base = base.replace(/\/+$/, '');
-	  
-	  return `${base}/participant.html?room=${encodeURIComponent(roomId)}&category=${encodeURIComponent(category)}&mode=${encodeURIComponent(mode)}&total=${total}`;
+	 console.log(`After:${base}`);
+	  return `${base}participant.html?room=${encodeURIComponent(roomId)}&category=${encodeURIComponent(category)}&mode=${encodeURIComponent(mode)}&total=${total}`;
 	}
 
 	  
