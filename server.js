@@ -347,22 +347,39 @@ app.post('/api/topics/:topicId/bulk-upload', upload.single('file'), async (req, 
 
 
 	// 🛠️ Robust helper to generate clean participant URLs without double slashes
+// 🛠️ Robust helper to generate clean participant URLs without double slashes
+// 🛠️ Robust helper to generate clean participant URLs without double slashes
 	function generateJoinUrl(socket, roomId, category, mode, total) {
 	  const reqHost = socket.handshake.headers.host;
-	  const protocol = socket.handshake.headers['x-forwarded-proto'] || 'http';
+	  let rawProto = socket.handshake.headers['x-forwarded-proto'] || 'http';
 	  
-	  // Check all possible environment variables and request headers
+	  // Handle proxy headers that send comma-separated values (e.g., "https, https")
+	  let protocol = rawProto.split(',')[0].trim();
+	  
+	  // Clean protocol just in case
+	  protocol = protocol.replace(/:\/\/?$/, '').replace(/\/+$/, '');
+
 	  let base = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 
 				 (reqHost && !reqHost.includes('localhost') && !reqHost.includes('127.0.0.1') 
 				   ? `${protocol}://${reqHost}` 
 				   : `http://${getLocalIpAddress()}:${PORT}`);
-	  
-	  // Strip ALL trailing slashes from the base URL (prevents any // occurrence)
-	  console.log(`Before:${base}`);
+
+	  // 🔑 CRITICAL: Strip all trailing slashes from base to prevent double slashes
 	  base = base.replace(/\/+$/, '');
-	 console.log(`After:${base}`);
-	  return `${base}/participant.html?room=${encodeURIComponent(roomId)}&category=${encodeURIComponent(category)}&mode=${encodeURIComponent(mode)}&total=${total}`;
+
+	  // Debug log to check the clean base URL inside Render logs
+	  console.log('Generating QR URL with clean base:', base);
+
+	  // Native URL constructor automatically normalizes all slashes and paths safely
+	  const joinUrl = new URL('/participant.html', base);
+	  joinUrl.searchParams.set('room', roomId);
+	  joinUrl.searchParams.set('category', category);
+	  joinUrl.searchParams.set('mode', mode);
+	  joinUrl.searchParams.set('total', total);
+
+	  return joinUrl.toString();
 	}
+
 	
 // SOCKET.IO REAL-TIME GAME LOGIC
 	io.on('connection', (socket) => {
