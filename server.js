@@ -344,8 +344,7 @@ app.post('/api/topics/:topicId/bulk-upload', upload.single('file'), async (req, 
   }
 });
 
-// SOCKET.IO REAL-TIME GAME LOGIC
-	io.on('connection', (socket) => {
+
 
 	// 🛠️ Robust helper to generate clean participant URLs without double slashes
 	function generateJoinUrl(socket, roomId, category, mode, total) {
@@ -364,8 +363,10 @@ app.post('/api/topics/:topicId/bulk-upload', upload.single('file'), async (req, 
 	 console.log(`After:${base}`);
 	  return `${base}participant.html?room=${encodeURIComponent(roomId)}&category=${encodeURIComponent(category)}&mode=${encodeURIComponent(mode)}&total=${total}`;
 	}
-
-	  
+	
+// SOCKET.IO REAL-TIME GAME LOGIC
+	io.on('connection', (socket) => {
+  
 	socket.on('create_room', async (data) => {
 		const roomId = typeof data === 'object' ? data.roomId : data;
 		const mode = typeof data === 'object' ? data.mode : 'manual';
