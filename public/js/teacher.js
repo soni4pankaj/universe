@@ -211,12 +211,26 @@ document.addEventListener('DOMContentLoaded', () => {
   // Socket listeners for teacher room & lobby updates
   setTimeout(() => {
     if (typeof socket !== 'undefined') {
-      socket.on('room_ready', ({ qrCode, roomId }) => {
+		socket.on('room_ready', ({ qrCode, joinUrl, roomId }) => {
         const qrImg = document.getElementById('lobby-qr-img');
         const lobbyCard = document.getElementById('teacher-lobby-card');
+        const urlInput = document.getElementById('lobby-join-url-input');
+        const copyBtn = document.getElementById('copy-join-url-btn');
+
         if (qrImg) qrImg.src = qrCode;
+        if (urlInput && joinUrl) urlInput.value = joinUrl; // 👈 Populates the URL box
         if (lobbyCard) lobbyCard.classList.remove('hidden');
+
+        if (copyBtn && urlInput) {
+          copyBtn.onclick = () => {
+            navigator.clipboard.writeText(urlInput.value).then(() => {
+              copyBtn.textContent = 'Copied! ✓';
+              setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+            });
+          };
+        }
       });
+	  
 
       window.latestLeaderboard = [];
 
