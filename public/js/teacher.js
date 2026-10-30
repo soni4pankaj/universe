@@ -2,28 +2,26 @@
 
 
 // Example snippet to include inside your teacher.js on load
+// --- Teacher Dashboard & Socket Room Management Script ---
+
+// Updated loadTeacherData using localStorage to prevent 401 Unauthorized errors
 async function loadTeacherData() {
-  try {
-    const response = await fetch('/api/current-user');
-    const data = await response.json();
+  const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+  
+  if (currentUser && currentUser.username) {
+    const assignedTopics = currentUser.assignedTopics || ['default'];
     
-    if (data.success && data.user) {
-      const assignedTopics = data.user.assignedTopics || ['default'];
-      
-      // Populate your teacher dashboard topic dropdown or list here
-      const topicSelect = document.getElementById('topicSelect'); // update with your actual element ID
-      if (topicSelect) {
-        topicSelect.innerHTML = '';
-        assignedTopics.forEach(topic => {
-          const option = document.createElement('option');
-          option.value = topic;
-          option.textContent = topic;
-          topicSelect.appendChild(option);
-        });
-      }
+    // Populate your teacher dashboard topic dropdown or list here
+    const topicSelect = document.getElementById('topicSelect'); 
+    if (topicSelect) {
+      topicSelect.innerHTML = '';
+      assignedTopics.forEach(topic => {
+        const option = document.createElement('option');
+        option.value = topic;
+        option.textContent = topic;
+        topicSelect.appendChild(option);
+      });
     }
-  } catch (err) {
-    console.error('Failed to load teacher session data:', err);
   }
 }
 
@@ -117,12 +115,14 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const selectedChapter = document.getElementById('teacher-chapter-select')?.value || null;
+	const currentUser = JSON.parse(localStorage.getItem('currentUser')) || {};
+	const teacherUsername = currentUser.username || 'Teacher';
 
       socket.emit('create_teacher_room', { 
         roomId: window.currentRoomId, 
         category: selectedTopic, 
         mode: selectedMode,
-        chapterId: selectedMode.startsWith('chapter_') ? selectedChapter : null
+        teacherName: teacherUsername
       });
     });
   }

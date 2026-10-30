@@ -146,6 +146,41 @@
         </div>
       </div>
 
+      <!-- 🌟 LIVE ACTIVE SESSIONS MONITORING DASHBOARD -->
+      <section class="bg-slate-900/40 p-6 rounded-3xl border border-white/10 backdrop-blur-xl space-y-6">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-4">
+          <div>
+            <h2 class="text-xl font-bold text-white flex items-center gap-2">
+              <span class="relative flex h-3 w-3">
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+              </span>
+              Live Active Quiz Sessions
+            </h2>
+            <p class="text-xs text-slate-400 mt-1">Monitor real-time concurrent quizzes across classes, view live student counts, and inspect class leaderboards.</p>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <div class="px-3.5 py-1.5 rounded-2xl bg-purple-500/10 border border-purple-500/20 text-purple-300 text-xs font-semibold flex items-center gap-2">
+              <i data-lucide="radio" class="w-4 h-4 text-purple-400"></i>
+              <span>Active Rooms: <strong id="admin-active-rooms-count" class="text-white font-bold">0</strong></span>
+            </div>
+            <div class="px-3.5 py-1.5 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-semibold flex items-center gap-2">
+              <i data-lucide="users" class="w-4 h-4 text-indigo-400"></i>
+              <span>Total Live Students: <strong id="admin-total-students-count" class="text-white font-bold">0</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <div id="admin-live-rooms-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div id="admin-no-rooms-msg" class="col-span-full py-12 text-center bg-slate-950/40 rounded-2xl border border-white/5 space-y-2">
+            <i data-lucide="activity" class="w-8 h-8 text-slate-600 mx-auto animate-pulse"></i>
+            <p class="text-sm font-medium text-slate-400">No live quiz sessions currently running</p>
+            <p class="text-xs text-slate-500">Active classroom sessions created by teachers will appear here in real-time.</p>
+          </div>
+        </div>
+      </section>
+
       <!-- Topic Master Management -->
       <div class="bg-slate-900/40 p-6 rounded-3xl border border-white/10 backdrop-blur-xl">
         <h2 class="text-lg font-semibold text-white mb-3">Topic Master List</h2>
@@ -154,7 +189,7 @@
           <button type="submit" class="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-lg shadow-purple-600/30 transition-all">Add Topic</button>
         </form>
         <div id="topic-tags-container" class="flex flex-wrap gap-2 text-xs text-slate-300">
-          <!-- Populated dynamically with active topics -->
+          <!-- Populated dynamically -->
         </div>
       </div>
 
@@ -175,7 +210,7 @@
           <div>
             <label class="block text-xs font-medium text-slate-300 mb-1.5">Assign Topics</label>
             <div id="user-topics-checkboxes" class="flex flex-wrap gap-4 p-3 rounded-xl bg-slate-950/50 border border-white/10 max-h-36 overflow-y-auto">
-              <!-- Dynamically populated checkboxes from database -->
+              <!-- Dynamically populated checkboxes -->
             </div>
           </div>
 
@@ -214,13 +249,12 @@
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <!-- Room Configuration -->
         <div class="bg-slate-900/40 p-6 rounded-3xl border border-white/10 backdrop-blur-xl space-y-4">
           <h2 class="text-lg font-semibold text-white">Configure Quiz Session</h2>
           <div>
             <label class="block text-xs font-medium text-slate-300 mb-1">Select Topic</label>
             <select id="teacher-topic-select" class="w-full px-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-purple-500">
-              <!-- Dynamically populated from teacher's assignedTopics -->
+              <!-- Populated dynamically -->
             </select>
           </div>
           <div>
@@ -235,19 +269,23 @@
           </button>
         </div>
 
-        <!-- QR Lobby & Connected Students -->
         <div id="teacher-lobby-card" class="hidden bg-slate-900/40 p-6 rounded-3xl border border-white/10 backdrop-blur-xl flex flex-col items-center justify-center text-center space-y-4">
-          
-          <!-- QR Code Section (Hides when quiz starts) -->
           <div id="qr-code-section" class="space-y-3 w-full flex flex-col items-center">
             <h2 class="text-lg font-semibold text-white">Student Lobby QR Code</h2>
-            <p class="text-xs text-slate-400">Students scan this code to join your room:</p>
+            <p class="text-xs text-slate-400">Students scan this code or use the link below to join:</p>
             <div class="p-3 bg-white rounded-2xl shadow-xl">
               <img id="lobby-qr-img" src="" alt="Room QR Code" class="w-36 h-36 object-contain">
             </div>
+
+            <div class="w-full max-w-md pt-2">
+              <label class="block text-[11px] text-slate-400 font-medium mb-1 text-left">Session Link:</label>
+              <div class="flex items-center gap-2">
+                <input type="text" id="lobby-join-url-input" readonly class="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-xs text-purple-200 focus:outline-none select-all" placeholder="Generating link..." />
+                <button id="copy-join-url-btn" type="button" class="px-3 py-2 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/30 text-xs font-semibold whitespace-nowrap transition-all">Copy</button>
+              </div>
+            </div>
           </div>
 
-          <!-- Lobby Stats & Controls (Stays visible) -->
           <div class="w-full space-y-3 pt-2 border-t border-white/10">
             <div class="text-xs text-purple-300 font-medium">
               Joined Students: <span id="lobby-student-count" class="font-bold text-white">0</span>
@@ -257,7 +295,6 @@
               Start Quiz for All Students
             </button>
           </div>
-
         </div>
       </div>
     </div>
@@ -269,18 +306,14 @@
           <h1 id="quiz-category-title" class="text-2xl font-bold text-white mb-1">Assigned Quiz</h1>
           <p class="text-xs text-slate-400">Answer the category-filtered questions assigned to your account.</p>
         </div>
-        <!-- Live Timer Badge -->
         <div class="flex items-center gap-2 px-4 py-2 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold">
           <i data-lucide="clock" class="w-4 h-4"></i>
           <span>Time Remaining: <span id="time-remaining" class="font-mono font-bold">02:00</span></span>
         </div>
       </div>
 
-      <div id="quiz-container" class="space-y-4 max-w-2xl mx-auto">
-        <!-- Dynamically loaded questions -->
-      </div>
+      <div id="quiz-container" class="space-y-4 max-w-2xl mx-auto"></div>
 
-      <!-- Result Card (Hidden by default) -->
       <div id="quiz-result-card" class="hidden max-w-2xl mx-auto p-8 rounded-3xl border border-purple-500/30 bg-slate-900/80 backdrop-blur-xl text-center space-y-4 shadow-2xl">
         <div class="inline-flex p-3 rounded-2xl bg-purple-500/20 text-purple-300 border border-purple-500/30">
           <i data-lucide="award" class="w-8 h-8"></i>
@@ -321,9 +354,7 @@
         </div>
         <div>
           <label class="block text-xs font-medium text-slate-300 mb-1.5">Assigned Topics</label>
-          <div id="edit-user-topics-checkboxes" class="flex flex-wrap gap-4 p-3 rounded-xl bg-slate-950/50 border border-white/10 max-h-36 overflow-y-auto">
-            <!-- Dynamically populated checkboxes -->
-          </div>
+          <div id="edit-user-topics-checkboxes" class="flex flex-wrap gap-4 p-3 rounded-xl bg-slate-950/50 border border-white/10 max-h-36 overflow-y-auto"></div>
         </div>
         <div class="flex justify-end gap-3 mt-6">
           <button type="button" onclick="closeEditModal()" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold hover:bg-slate-700 transition-all">Cancel</button>
@@ -333,8 +364,50 @@
     </div>
   </div>
 
+  <!-- 🌟 REAL-TIME LEADERBOARD INSPECTOR MODAL FOR INDEX VIEW -->
+  <div id="adminLeaderboardModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md">
+    <div class="bg-slate-900 border border-white/15 p-6 rounded-3xl w-full max-w-2xl shadow-2xl relative max-h-[85vh] flex flex-col">
+      <div class="flex items-center justify-between border-b border-white/10 pb-4">
+        <div>
+          <h3 id="modal-room-title" class="text-lg font-bold text-white flex items-center gap-2">
+            <i data-lucide="trophy" class="w-5 h-5 text-amber-400"></i>
+            Live Class Leaderboard
+          </h3>
+          <p id="modal-room-subtitle" class="text-xs text-slate-400 mt-0.5">Room ID: <span class="text-purple-300 font-mono">--</span></p>
+        </div>
+        <button onclick="closeAdminLeaderboardModal()" class="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-all">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="overflow-y-auto my-4 flex-1 rounded-2xl border border-white/10 bg-slate-950/50">
+        <table class="w-full text-left border-collapse text-xs">
+          <thead>
+            <tr class="border-b border-white/10 bg-white/5 text-slate-400 font-semibold uppercase tracking-wider text-[10px]">
+              <th class="px-4 py-3">Rank</th>
+              <th class="px-4 py-3">Student Name</th>
+              <th class="px-4 py-3 text-right">Score</th>
+              <th class="px-4 py-3 text-right">Total Time (s)</th>
+            </tr>
+          </thead>
+          <tbody id="modal-leaderboard-body" class="divide-y divide-white/5 text-slate-200">
+            <tr><td colspan="4" class="px-4 py-6 text-center text-slate-500">No participants recorded yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="flex items-center justify-between pt-3 border-t border-white/10">
+        <div id="modal-room-status-badge" class="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-[11px] font-medium border border-emerald-500/30">
+          Status: Active
+        </div>
+        <button onclick="closeAdminLeaderboardModal()" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold hover:bg-slate-700 transition-all">
+          Close Inspector
+        </button>
+      </div>
+    </div>
+  </div>
+
   <script>
-    // Initialize Lucide Icons globally on load
     document.addEventListener('DOMContentLoaded', () => {
       if (typeof lucide !== 'undefined') lucide.createIcons();
     });

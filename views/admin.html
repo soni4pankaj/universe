@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Quiz Admin Dashboard</title>
+	<script src="/socket.io/socket.io.js"></script>
+	<script>const socket = io();</script>
+  
   <style>
     body { font-family: Arial, sans-serif; background: #f4f6f9; margin: 0; padding: 20px; }
     .container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
@@ -30,6 +33,21 @@
       <h1>Admin Dashboard</h1>
       <button class="logout-btn" onclick="logout()">Logout</button>
     </div>
+	<!-- 🌟 LIVE ACTIVE SESSIONS MONITORING DASHBOARD -->
+	<div style="margin-bottom: 30px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+	  <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 15px;">
+		<h2>Live Active Quiz Sessions</h2>
+		<div style="display: flex; gap: 15px; font-size: 14px;">
+		  <span>Active Rooms: <strong id="admin-active-rooms-count">0</strong></span>
+		  <span>Total Students: <strong id="admin-total-students-count">0</strong></span>
+		</div>
+	  </div>
+	  <div id="admin-live-rooms-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 15px;">
+		<div style="grid-column: 1 / -1; text-align: center; color: #666; padding: 20px;">
+		  No live quiz sessions currently running.
+		</div>
+	  </div>
+	</div>
 
     <h2>Create New User & Assign Quiz</h2>
     <form id="createUserForm">
@@ -70,6 +88,21 @@
       </tbody>
     </table>
   </div>
+
+	<div id="adminLeaderboardModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100;">
+	  <div style="background: white; padding: 25px; border-radius: 8px; width: 500px; max-height: 80vh; overflow-y: auto;">
+		<h3>Live Class Leaderboard</h3>
+		<p id="modal-room-subtitle" style="font-size: 13px; color: #666;">Room ID: --</p>
+		<table style="width: 100%; margin-top: 10px;">
+		  <thead><tr><th>Rank</th><th>Student Name</th><th>Score</th><th>Time</th></tr></thead>
+		  <tbody id="modal-leaderboard-body"></tbody>
+		</table>
+		<div style="text-align: right; margin-top: 15px;">
+		  <button onclick="closeAdminLeaderboardModal()" style="background: #6c757d;">Close</button>
+		</div>
+	  </div>
+	</div>
+
 
   <script>
     // Check if logged in as admin

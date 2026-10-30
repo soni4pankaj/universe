@@ -43,6 +43,25 @@ function requireTeacherAuth(req, res, next) {
   return res.redirect('/');
 }
 
+// LIVE MONITORING OF QUIZES
+function sendAdminLiveUpdates() {
+  const activeRoomsSummary = Object.keys(rooms).map(roomId => {
+    const room = rooms[roomId];
+    return {
+      roomId,
+	  teacherName: room.teacherName || 'Unknown Teacher',
+      category: room.category || 'default',
+      mode: room.mode || 'rapid',
+      status: room.status || 'waiting',
+      studentCount: Object.keys(room.players || {}).length,
+      leaderboard: getSortedLeaderboard(room)
+    };
+  });
+  io.to('admin_monitor_room').emit('admin_rooms_update', activeRoomsSummary);
+}
+
+
+
 // Secure Route for Index Page
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'index.html'));
@@ -406,7 +425,7 @@ io.on('connection', (socket) => {
   });
 
   // --- TEACHER & RAPID-FIRE / PAPER MODE SOCKET HANDLERS ---
-  socket.on('create_teacher_room', async ({ roomId, category, mode }) => {
+  socket.on('create_teacher_room', async ({ roomId, category, mode, teacherName }) => {
     socket.join(roomId);
 
     let fetchedQuestions = await Question.find({ category });
@@ -427,6 +446,7 @@ io.on('connection', (socket) => {
     const existingPlayers = rooms[roomId] ? rooms[roomId].players : {};
 
     rooms[roomId] = {
+      teacherName: teacherName || (socket.request.session && socket.request.session.user ? socket.request.session.user.username : 'Teacher'), // 👈 Saves teacher username
       category,
       mode, 
       questions: fetchedQuestions,
@@ -437,6 +457,7 @@ io.on('connection', (socket) => {
     };
 
     socket.emit('room_ready', { qrCode: qrImage, joinUrl: finalJoinUrl, roomId });
+	sendAdminLiveUpdates();	
   });
 
   socket.on('join_teacher_lobby', ({ roomId, name }) => {
@@ -452,6 +473,7 @@ io.on('connection', (socket) => {
       mode: room.mode,
       category: room.category
     });
+	sendAdminLiveUpdates();
   });
 
   socket.on('start_teacher_quiz', async (roomId) => {
@@ -526,6 +548,8 @@ io.on('connection', (socket) => {
     
     io.to(roomId).emit('teacher_leaderboard_update', getSortedLeaderboard(room));
 
+	sendAdminLiveUpdates();
+
     const totalPlayers = Object.keys(room.players).length;
     if (totalPlayers > 0 && answeredParticipants.size >= totalPlayers) {
       if (questionTimer) clearInterval(questionTimer);
@@ -534,6 +558,31 @@ io.on('connection', (socket) => {
       }, 5000);
     }
   });
+  
+  // --- ADMIN LIVE MONITORING SOCKETS & CONTROLS ---
+socket.on('join_admin_monitor', () => {
+  socket.join('admin_monitor_room');
+  sendAdminLiveUpdates();
+});
+
+socket.on('admin_end_room', ({ roomId }) => {
+  const room = rooms[roomId];
+  if (room) {
+    room.status = 'ended';
+    io.to(roomId).emit('quiz_ended');
+    sendAdminLiveUpdates();
+  }
+});
+
+socket.on('admin_remove_room', ({ roomId }) => {
+  if (rooms[roomId]) {
+    delete rooms[roomId];
+    sendAdminLiveUpdates();
+  }
+});
+
+// --- ADMIN LIVE MONITORING SOCKETS & CONTROLS END ---
+  
   
   socket.on('submit_paper_answers', ({ roomId, answers, timeTaken }) => {
     const room = rooms[roomId];
@@ -551,15 +600,19 @@ io.on('connection', (socket) => {
     });
 
     room.players[socket.id].score = score;
-
+	room.status = 'ended';
+	
     io.to(roomId).emit('lobby_update', { players: Object.values(room.players) });
     io.to(roomId).emit('teacher_leaderboard_update', getSortedLeaderboard(room));
     
+	
+	
     socket.emit('paper_submitted_success', { 
       score, 
       total: room.questions.length,
       totalTime: elapsedSeconds 
     });
+	sendAdminLiveUpdates();
   });
 
 });
@@ -578,6 +631,7 @@ function runRapidFireQuestion(roomId) {
     
     io.to(roomId).emit('quiz_ended');
     room.status = 'ended';
+	sendAdminLiveUpdates();
     return;
   }
 
