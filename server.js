@@ -43,13 +43,37 @@ function requireTeacherAuth(req, res, next) {
   return res.redirect('/');
 }
 
+let questions = [];
+const rooms = {};
+
+function clearRoomTimers(room) {
+  if (!room) return;
+  if (room.questionTimer) {
+    clearInterval(room.questionTimer);
+    room.questionTimer = null;
+  }
+  if (room.advanceTimeout) {
+    clearTimeout(room.advanceTimeout);
+    room.advanceTimeout = null;
+  }
+}
+
+function findPlayerByName(room, name) {
+  if (!room || !room.players || !name) return null;
+  const normalized = String(name).trim().toLowerCase();
+  if (!normalized) return null;
+  return Object.entries(room.players).find(
+    ([, p]) => (p.name || '').trim().toLowerCase() === normalized
+  );
+}
+
 // LIVE MONITORING OF QUIZES
 function sendAdminLiveUpdates() {
   const activeRoomsSummary = Object.keys(rooms).map(roomId => {
     const room = rooms[roomId];
     return {
       roomId,
-	  teacherName: room.teacherName || 'Unknown Teacher',
+      teacherName: room.teacherName || 'Unknown Teacher',
       category: room.category || 'default',
       mode: room.mode || 'rapid',
       status: room.status || 'waiting',
@@ -59,8 +83,6 @@ function sendAdminLiveUpdates() {
   });
   io.to('admin_monitor_room').emit('admin_rooms_update', activeRoomsSummary);
 }
-
-
 
 // Secure Route for Index Page
 app.get('/', (req, res) => {
@@ -75,11 +97,6 @@ app.get('/participant.html', (req, res) => {
 app.get('/participant', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'participant.html'));
 });
-
-let questionTimer = null;
-let questions = [];
-const rooms = {};
-let answeredParticipants = new Set(); // Track who answered the current question
 
 // Connect to MongoDB Atlas
 mongoose.connect(process.env.MONGODB_URI)
@@ -265,11 +282,11 @@ async function initQuestions() {
 initQuestions();
 
 function getSortedLeaderboard(room) {
-  return Object.values(room.players).sort((a, b) => {
+  return Object.values(room.players || {}).sort((a, b) => {
     if (b.score !== a.score) {
       return b.score - a.score; // Higher score comes first
     }
-    return a.totalTime - b.totalTime; // If scores are tied, lower total time comes first
+    return (a.totalTime || 0) - (b.totalTime || 0); // If scores are tied, lower total time comes first
   });
 }
 
@@ -362,7 +379,7 @@ app.post('/api/topics/:topicId/bulk-upload', upload.single('file'), async (req, 
   }
 });
 
-// 🛠️ Bulletproof URL Builder using native URL object (Impossible to have double slashes)
+// Bulletproof URL Builder using native URL object (Impossible to have double slashes)
 function getBaseUrl(socket) {
   const reqHost = socket.handshake.headers.host;
   let rawProto = socket.handshake.headers['x-forwarded-proto'] || 'http';
@@ -376,7 +393,6 @@ function getBaseUrl(socket) {
 
   rawBase = rawBase.replace(/\/+$/, '');
 
-  // Native URL constructor completely normalizes slashes automatically
   const targetUrl = new URL('/participant.html', rawBase);
   return targetUrl.toString();
 }
@@ -388,6 +404,10 @@ io.on('connection', (socket) => {
     const roomId = typeof data === 'object' ? data.roomId : data;
     const mode = typeof data === 'object' ? data.mode : 'manual';
     const category = typeof data === 'object' ? data.category || 'default' : 'default';
+
+    if (rooms[roomId]) {
+      clearRoomTimers(rooms[roomId]);
+    }
 
     questions = await Question.find({ category }).sort({ id: 1 });
     socket.join(roomId);
@@ -406,7 +426,10 @@ io.on('connection', (socket) => {
       currentQuestion: 0,
       players: {},
       answers: {},
-      mode: mode
+      mode: mode,
+      answeredParticipants: new Set(),
+      questionTimer: null,
+      advanceTimeout: null
     };
 
     socket.emit('room_created', { roomId, qrCode: qrImage });
@@ -418,14 +441,35 @@ io.on('connection', (socket) => {
 
     socket.join(roomId);
     if (!room.players) room.players = {};
-    room.players[socket.id] = { id: socket.id, name, score: 0, totalTime: 0 };
+    if (!room.answeredParticipants) room.answeredParticipants = new Set();
 
-    socket.emit('joined_successfully', { roomId, name, mode: room.mode });
+    const existingEntry = findPlayerByName(room, name);
+    let playerObj;
+
+    if (existingEntry) {
+      const [oldSocketId, oldPlayer] = existingEntry;
+      delete room.players[oldSocketId];
+      if (room.answeredParticipants.has(oldSocketId)) {
+        room.answeredParticipants.delete(oldSocketId);
+        room.answeredParticipants.add(socket.id);
+      }
+      playerObj = { ...oldPlayer, id: socket.id };
+    } else {
+      playerObj = { id: socket.id, name: String(name).trim(), score: 0, totalTime: 0 };
+    }
+
+    room.players[socket.id] = playerObj;
+
+    socket.emit('joined_successfully', { roomId, name: playerObj.name, mode: room.mode });
     io.to(roomId).emit('player_list_update', Object.values(room.players));
   });
 
   // --- TEACHER & RAPID-FIRE / PAPER MODE SOCKET HANDLERS ---
   socket.on('create_teacher_room', async ({ roomId, category, mode, teacherName }) => {
+    if (rooms[roomId]) {
+      clearRoomTimers(rooms[roomId]);
+    }
+
     socket.join(roomId);
 
     let fetchedQuestions = await Question.find({ category });
@@ -446,18 +490,21 @@ io.on('connection', (socket) => {
     const existingPlayers = rooms[roomId] ? rooms[roomId].players : {};
 
     rooms[roomId] = {
-      teacherName: teacherName || (socket.request.session && socket.request.session.user ? socket.request.session.user.username : 'Teacher'), // 👈 Saves teacher username
+      teacherName: teacherName || (socket.request.session && socket.request.session.user ? socket.request.session.user.username : 'Teacher'),
       category,
       mode, 
       questions: fetchedQuestions,
       currentQuestionIndex: 0,
       players: existingPlayers, 
       answers: {},
-      status: 'waiting'
+      status: 'waiting',
+      answeredParticipants: new Set(),
+      questionTimer: null,
+      advanceTimeout: null
     };
 
     socket.emit('room_ready', { qrCode: qrImage, joinUrl: finalJoinUrl, roomId });
-	sendAdminLiveUpdates();	
+    sendAdminLiveUpdates();	
   });
 
   socket.on('join_teacher_lobby', ({ roomId, name }) => {
@@ -466,19 +513,66 @@ io.on('connection', (socket) => {
 
     socket.join(roomId);
     if (!room.players) room.players = {};
-    room.players[socket.id] = { id: socket.id, name, score: 0, totalTime: 0 };
+    if (!room.answeredParticipants) room.answeredParticipants = new Set();
+
+    const existingEntry = findPlayerByName(room, name);
+    let playerObj;
+
+    if (existingEntry) {
+      const [oldSocketId, oldPlayer] = existingEntry;
+      delete room.players[oldSocketId];
+
+      if (room.answeredParticipants.has(oldSocketId)) {
+        room.answeredParticipants.delete(oldSocketId);
+        room.answeredParticipants.add(socket.id);
+      }
+
+      playerObj = {
+        ...oldPlayer,
+        id: socket.id
+      };
+    } else {
+      playerObj = {
+        id: socket.id,
+        name: String(name).trim(),
+        score: 0,
+        totalTime: 0
+      };
+    }
+
+    room.players[socket.id] = playerObj;
 
     io.to(roomId).emit('lobby_update', {
       players: Object.values(room.players),
       mode: room.mode,
-      category: room.category
+      category: room.category,
+      totalQuestions: (room.questions || []).length
     });
-	sendAdminLiveUpdates();
+    sendAdminLiveUpdates();
+
+    // Sync reconnected participant to active quiz state if already started
+    if (room.status === 'active' && room.mode === 'rapid' && room.currentQuestionIndex > 0) {
+      const activeQ = room.questions[room.currentQuestionIndex - 1];
+      if (activeQ) {
+        socket.emit('next_rapid_question', {
+          questionIndex: room.currentQuestionIndex,
+          total: room.questions.length,
+          question: activeQ.question || activeQ.questionText,
+          options: activeQ.options,
+          alreadyAnswered: room.answeredParticipants.has(socket.id),
+          currentScore: playerObj.score
+        });
+      }
+    } else if (room.status === 'ended') {
+      socket.emit('participant_final_results', getSortedLeaderboard(room));
+    }
   });
 
   socket.on('start_teacher_quiz', async (roomId) => {
     let room = rooms[roomId];
     if (!room) return;
+
+    clearRoomTimers(room);
 
     if (!room.questions || room.questions.length === 0) {
       room.questions = await Question.find({ category: room.category || 'default' });
@@ -489,6 +583,14 @@ io.on('connection', (socket) => {
 
     room.status = 'active';
     room.paperStartTime = Date.now();
+    room.answeredParticipants = new Set();
+
+    // Reset scores/times cleanly on new quiz start while keeping connected players
+    Object.values(room.players || {}).forEach(p => {
+      p.score = 0;
+      p.totalTime = 0;
+    });
+
     io.to(roomId).emit('quiz_started', { mode: room.mode, questions: room.questions });
 
     if (room.mode === 'rapid') {
@@ -510,10 +612,11 @@ io.on('connection', (socket) => {
 
   socket.on('submit_rapid_answer', ({ roomId, optionIndex }) => {
     const room = rooms[roomId];
-    if (!room || !room.players[socket.id]) return;
+    if (!room || room.status !== 'active' || !room.players[socket.id]) return;
 
-    if (answeredParticipants.has(socket.id)) return;
-    answeredParticipants.add(socket.id);
+    if (!room.answeredParticipants) room.answeredParticipants = new Set();
+    if (room.answeredParticipants.has(socket.id)) return;
+    room.answeredParticipants.add(socket.id);
 
     const currentQ = room.questions[room.currentQuestionIndex - 1];
     if (!currentQ) return;
@@ -521,7 +624,7 @@ io.on('connection', (socket) => {
     const correctAnswer = currentQ.answer !== undefined ? currentQ.answer : currentQ.correctAnswer;
     const isCorrect = optionIndex === correctAnswer;
 
-    const elapsedSeconds = Math.floor((Date.now() - (room.currentQuestionStartTime || Date.now())) / 1000);
+    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - (room.currentQuestionStartTime || Date.now())) / 1000));
     
     room.players[socket.id].totalTime = (room.players[socket.id].totalTime || 0) + elapsedSeconds;
 
@@ -547,42 +650,47 @@ io.on('connection', (socket) => {
     });
     
     io.to(roomId).emit('teacher_leaderboard_update', getSortedLeaderboard(room));
-
-	sendAdminLiveUpdates();
+    sendAdminLiveUpdates();
 
     const totalPlayers = Object.keys(room.players).length;
-    if (totalPlayers > 0 && answeredParticipants.size >= totalPlayers) {
-      if (questionTimer) clearInterval(questionTimer);
-      setTimeout(() => {
+    if (totalPlayers > 0 && room.answeredParticipants.size >= totalPlayers) {
+      if (room.questionTimer) {
+        clearInterval(room.questionTimer);
+        room.questionTimer = null;
+      }
+      if (room.advanceTimeout) {
+        clearTimeout(room.advanceTimeout);
+      }
+      room.advanceTimeout = setTimeout(() => {
         runRapidFireQuestion(roomId);
       }, 5000);
     }
   });
   
   // --- ADMIN LIVE MONITORING SOCKETS & CONTROLS ---
-socket.on('join_admin_monitor', () => {
-  socket.join('admin_monitor_room');
-  sendAdminLiveUpdates();
-});
-
-socket.on('admin_end_room', ({ roomId }) => {
-  const room = rooms[roomId];
-  if (room) {
-    room.status = 'ended';
-    io.to(roomId).emit('quiz_ended');
+  socket.on('join_admin_monitor', () => {
+    socket.join('admin_monitor_room');
     sendAdminLiveUpdates();
-  }
-});
+  });
 
-socket.on('admin_remove_room', ({ roomId }) => {
-  if (rooms[roomId]) {
-    delete rooms[roomId];
-    sendAdminLiveUpdates();
-  }
-});
+  socket.on('admin_end_room', ({ roomId }) => {
+    const room = rooms[roomId];
+    if (room) {
+      clearRoomTimers(room);
+      room.status = 'ended';
+      io.to(roomId).emit('quiz_ended');
+      sendAdminLiveUpdates();
+    }
+  });
 
-// --- ADMIN LIVE MONITORING SOCKETS & CONTROLS END ---
-  
+  socket.on('admin_remove_room', ({ roomId }) => {
+    if (rooms[roomId]) {
+      clearRoomTimers(rooms[roomId]);
+      delete rooms[roomId];
+      sendAdminLiveUpdates();
+    }
+  });
+  // --- ADMIN LIVE MONITORING SOCKETS & CONTROLS END ---
   
   socket.on('submit_paper_answers', ({ roomId, answers, timeTaken }) => {
     const room = rooms[roomId];
@@ -594,25 +702,22 @@ socket.on('admin_remove_room', ({ roomId }) => {
     let score = 0;
     room.questions.forEach((q, index) => {
       const correctAnswer = q.answer !== undefined ? q.answer : q.correctAnswer;
-      if (answers[index] === correctAnswer) {
+      if (answers && answers[index] === correctAnswer) {
         score += 15;
       }
     });
 
     room.players[socket.id].score = score;
-	room.status = 'ended';
-	
+    
     io.to(roomId).emit('lobby_update', { players: Object.values(room.players) });
     io.to(roomId).emit('teacher_leaderboard_update', getSortedLeaderboard(room));
     
-	
-	
     socket.emit('paper_submitted_success', { 
       score, 
       total: room.questions.length,
       totalTime: elapsedSeconds 
     });
-	sendAdminLiveUpdates();
+    sendAdminLiveUpdates();
   });
 
 });
@@ -621,17 +726,17 @@ function runRapidFireQuestion(roomId) {
   const room = rooms[roomId];
   if (!room || room.status !== 'active') return;
 
-  answeredParticipants.clear();
+  clearRoomTimers(room);
+  room.answeredParticipants = new Set();
   
   if (room.currentQuestionIndex >= room.questions.length) {
-    if (questionTimer) clearInterval(questionTimer);
     const finalLeaderboard = getSortedLeaderboard(room);
     io.to(roomId).emit('teacher_leaderboard_update', finalLeaderboard);
     io.to(roomId).emit('participant_final_results', finalLeaderboard);
     
     io.to(roomId).emit('quiz_ended');
     room.status = 'ended';
-	sendAdminLiveUpdates();
+    sendAdminLiveUpdates();
     return;
   }
 
@@ -648,16 +753,17 @@ function runRapidFireQuestion(roomId) {
   });
 
   let timeLeft = 20;
-  if (questionTimer) clearInterval(questionTimer);
+  io.to(roomId).emit('timer_tick', timeLeft);
 
-  questionTimer = setInterval(() => {
+  room.questionTimer = setInterval(() => {
     timeLeft--;
     io.to(roomId).emit('timer_tick', timeLeft);
 
     if (timeLeft <= 0) {
-      clearInterval(questionTimer);
+      clearInterval(room.questionTimer);
+      room.questionTimer = null;
       io.to(roomId).emit('teacher_leaderboard_update', getSortedLeaderboard(room));
-      setTimeout(() => {
+      room.advanceTimeout = setTimeout(() => {
         runRapidFireQuestion(roomId);
       }, 3000);
     }

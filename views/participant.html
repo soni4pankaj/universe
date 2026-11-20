@@ -9,12 +9,12 @@
     body {
       font-family: Arial, Helvetica, sans-serif;
       background-color: #f0f4f8;
-	  background-image: url('/images/quiz-bg.jpg');
-	  background-size: cover;
-	  background-position: center;
-	  background-repeat: no-repeat;
-	  background-attachment: fixed;
-	  margin: 0;
+      background-image: url('/images/quiz-bg.jpg');
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+      background-attachment: fixed;
+      margin: 0;
       padding: 0;
       color: #333333;
       display: flex;
@@ -216,7 +216,6 @@
     <!-- 1. Join Room Form -->
     <div id="join-box">
       <h2>Participant Portal Login</h2>
-      <!-- Room input is hidden from participants as requested -->
       <input type="text" id="room-input" placeholder="Enter Room ID" class="hidden" />
       <input type="text" id="name-input" placeholder="Enter Your Full Name" autofocus />
       <button id="join-btn">Proceed to Session</button>
@@ -265,7 +264,7 @@
       <h3 id="question-text" style="font-size: 15px; font-weight: 600; line-height: 1.4; color: #1e293b; margin-top: 0;">Loading question...</h3>
       <div id="timer-container" style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #64748b; margin-bottom: 15px;">
         <span>Assessment Round</span>
-        <span><strong>Time Left:</strong> <span id="timer-display" style="color: #dc2626; font-weight: 700;">15</span>s</span>
+        <span><strong>Time Left:</strong> <span id="timer-display" style="color: #dc2626; font-weight: 700;">20</span>s</span>
       </div>
       <div id="options-container"></div>
       <p id="answer-status" class="status-msg"></p>
@@ -305,7 +304,11 @@
   <!-- Socket.io Script -->
   <script src="/socket.io/socket.io.js"></script>
   <script>
-    const socket = io();
+    const socket = io({
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000
+    });
 
     // Audio Elements
     const bgMusic = document.getElementById('bg-music');
@@ -335,11 +338,12 @@
     const paperTimerDisplay = document.getElementById('paper-timer-display');
 
     let currentRoomId = '';
+    let currentPlayerName = '';
     let selectedBtnRef = null;
     let roomGameMode = 'manual';
     let paperInterval = null;
     let readingInterval = null;
-	let paperStartTime = 0; // Add this near your other let variables
+    let paperStartTime = 0;
 
     function playSoundEffect(audioElement) {
       if (!audioElement) return;
@@ -361,6 +365,17 @@
       if (totalCountEl) { totalCountEl.textContent = totalParam; }
     }
 
+    // Automatically re-join room on reconnect if participant already joined
+    socket.on('connect', () => {
+      const savedRoom = sessionStorage.getItem('quiz_room_id') || currentRoomId;
+      const savedName = sessionStorage.getItem('quiz_player_name') || currentPlayerName;
+      if (savedRoom && savedName) {
+        currentRoomId = savedRoom;
+        currentPlayerName = savedName;
+        socket.emit('join_teacher_lobby', { roomId: savedRoom, name: savedName });
+      }
+    });
+
     joinBtn.addEventListener('click', () => {
       const roomId = roomInput.value.trim();
       const name = nameInput.value.trim();
@@ -380,7 +395,10 @@
       }
 
       currentRoomId = roomId;
-      socket.emit('join_room', { roomId, name });
+      currentPlayerName = name;
+      sessionStorage.setItem('quiz_room_id', roomId);
+      sessionStorage.setItem('quiz_player_name', name);
+
       socket.emit('join_teacher_lobby', { roomId, name });
 
       playerDisplayName.textContent = name;
@@ -388,11 +406,17 @@
       waitingBox.classList.remove('hidden');
     });
 
-    socket.on('lobby_update', (data) => { 
-      waitingBox.classList.remove('hidden'); 
+    socket.on('lobby_update', (data) => {
       if (data && data.totalQuestions) {
         const totalCountEl = document.getElementById('total-questions-count');
         if (totalCountEl) { totalCountEl.textContent = data.totalQuestions; }
+      }
+      // Only show waiting box if quiz hasn't moved to question or scoreboard
+      const isInQuestion = questionBox && !questionBox.classList.contains('hidden');
+      const isInScoreboard = scoreboardBox && !scoreboardBox.classList.contains('hidden');
+      if (!isInQuestion && !isInScoreboard && !joinBox.classList.contains('hidden')) {
+        joinBox.classList.add('hidden');
+        waitingBox.classList.remove('hidden');
       }
     });
 
@@ -403,7 +427,11 @@
       if (mode) { roomGameMode = mode; }
     });
 
-    socket.on('error_msg', (msg) => { errorMsg.textContent = msg; });
+    socket.on('error_msg', (msg) => {
+      errorMsg.textContent = msg;
+      joinBox.classList.remove('hidden');
+      waitingBox.classList.add('hidden');
+    });
 
     // Chapter Reading Phase Listener
     socket.on('start_reading_phase', ({ chapterText, readingTime }) => {
@@ -418,7 +446,7 @@
       const contentBox = document.getElementById('chapter-content-box');
       if (contentBox) contentBox.innerHTML = chapterText;
 
-      let timeLeft = readingTime; // 300 seconds (5 mins)
+      let timeLeft = readingTime;
       const countdownEl = document.getElementById('reading-countdown');
 
       if (readingInterval) clearInterval(readingInterval);
@@ -440,33 +468,9 @@
       if (readingInterval) clearInterval(readingInterval);
       const readingBox = document.getElementById('reading-box');
       if (readingBox) readingBox.classList.add('hidden');
-    });
 
-    socket.on('display_question', (data) => {
-      if (readingInterval) clearInterval(readingInterval);
-      const readingBox = document.getElementById('reading-box');
-      if (readingBox) readingBox.classList.add('hidden');
-
-      if (paperInterval) clearInterval(paperInterval);
-      if (paperTimerContainer) paperTimerContainer.classList.add('hidden');
-      
-      waitingBox.classList.add('hidden');
-      scoreboardBox.classList.add('hidden');
-      questionBox.classList.remove('hidden');
-
-      if (timerContainer) { timerContainer.style.display = 'flex'; }
-
-      answerStatus.textContent = '';
-      questionText.textContent = `Q${data.questionNumber}: ${data.question}`;
-      
-      optionsContainer.innerHTML = '';
-      data.options.forEach((opt, index) => {
-        const btn = document.createElement('button');
-        btn.className = 'option-btn';
-        btn.textContent = opt;
-        btn.addEventListener('click', () => submitAnswer(index, btn));
-        optionsContainer.appendChild(btn);
-      });
+      const liveScoreEl = document.getElementById('live-my-score');
+      if (liveScoreEl) liveScoreEl.textContent = '0';
     });
 
     socket.on('next_rapid_question', (data) => {
@@ -480,13 +484,21 @@
       const totalCountEl = document.getElementById('total-questions-count');
       if (totalCountEl && data.total) { totalCountEl.textContent = data.total; }
 
+      if (typeof data.currentScore === 'number') {
+        const liveScoreEl = document.getElementById('live-my-score');
+        if (liveScoreEl) liveScoreEl.textContent = data.currentScore;
+      }
+
+      joinBox.classList.add('hidden');
       waitingBox.classList.add('hidden');
       scoreboardBox.classList.add('hidden');
       questionBox.classList.remove('hidden');
 
       if (timerContainer) { timerContainer.style.display = 'flex'; }
 
-      answerStatus.textContent = '';
+      answerStatus.textContent = data.alreadyAnswered
+        ? 'Answer already recorded. Waiting for next question...'
+        : '';
       questionText.textContent = `Q${data.questionIndex}/${data.total}: ${data.question}`;
       
       optionsContainer.innerHTML = '';
@@ -494,21 +506,11 @@
         const btn = document.createElement('button');
         btn.className = 'option-btn';
         btn.textContent = opt;
+        btn.disabled = Boolean(data.alreadyAnswered);
         btn.addEventListener('click', () => submitRapidAnswer(index, btn));
         optionsContainer.appendChild(btn);
       });
     });
-	
-    function submitAnswer(selectedIndex, clickedBtn) {
-      selectedBtnRef = clickedBtn;
-      const buttons = optionsContainer.querySelectorAll('button');
-      buttons.forEach(btn => btn.disabled = true);
-      clickedBtn.style.backgroundColor = '#fef3c7';
-      clickedBtn.style.color = '#78350f';
-      clickedBtn.style.borderColor = '#f59e0b';
-
-      socket.emit('submit_answer', { roomId: currentRoomId, selectedOption: selectedIndex });
-    }
 
     function submitRapidAnswer(selectedIndex, clickedBtn) {
       selectedBtnRef = clickedBtn;
@@ -518,7 +520,8 @@
       clickedBtn.style.color = '#78350f';
       clickedBtn.style.borderColor = '#f59e0b';
 
-      socket.emit('submit_rapid_answer', { roomId: currentRoomId, optionIndex: selectedIndex });
+      const targetRoom = currentRoomId || sessionStorage.getItem('quiz_room_id');
+      socket.emit('submit_rapid_answer', { roomId: targetRoom, optionIndex: selectedIndex });
     }
 
     socket.on('display_paper_quiz', ({ questions }) => {
@@ -526,11 +529,11 @@
       const readingBox = document.getElementById('reading-box');
       if (readingBox) readingBox.classList.add('hidden');
 
+      joinBox.classList.add('hidden');
       waitingBox.classList.add('hidden');
       scoreboardBox.classList.add('hidden');
       questionBox.classList.remove('hidden');
 
-	// ⏱️ Start tracking paper exam elapsed time
       paperStartTime = Date.now();
 	  
       if (timerContainer) { timerContainer.style.display = 'none'; }
@@ -598,58 +601,36 @@
           return;
         }
 
-		// Calculate total seconds taken for the paper exam
         const timeTaken = Math.floor((Date.now() - paperStartTime) / 1000);
+        const targetRoom = currentRoomId || sessionStorage.getItem('quiz_room_id');
 		
-		socket.emit('submit_paper_answers', { 
-          roomId: currentRoomId, 
+        socket.emit('submit_paper_answers', { 
+          roomId: targetRoom, 
           answers: userAnswers, 
           timeTaken: timeTaken		  
-		});
+        });
       };
     });
 
-	// Update paper success listener to populate the time element
-	socket.on('paper_submitted_success', ({ score, total, totalTime }) => {
-		  if (paperInterval) clearInterval(paperInterval);
-		  if (paperTimerContainer) paperTimerContainer.classList.add('hidden');
+    socket.on('paper_submitted_success', ({ score, total, totalTime }) => {
+      if (paperInterval) clearInterval(paperInterval);
+      if (paperTimerContainer) paperTimerContainer.classList.add('hidden');
 
-		  questionBox.classList.add('hidden');
-		  scoreboardBox.classList.remove('hidden');
-		  
-		  const manualNotice = document.getElementById('manual-wait-notice');
-		  if (manualNotice) manualNotice.classList.add('hidden');
+      questionBox.classList.add('hidden');
+      scoreboardBox.classList.remove('hidden');
+      
+      const manualNotice = document.getElementById('manual-wait-notice');
+      if (manualNotice) manualNotice.classList.add('hidden');
 
-		  const myScoreEl = document.getElementById('my-score');
-		  if (myScoreEl) myScoreEl.textContent = score;
+      const myScoreEl = document.getElementById('my-score');
+      if (myScoreEl) myScoreEl.textContent = score;
 
-		  const myTotalTimeEl = document.getElementById('my-total-time');
-		  if (myTotalTimeEl) myTotalTimeEl.textContent = totalTime || 0;
+      const myTotalTimeEl = document.getElementById('my-total-time');
+      if (myTotalTimeEl) myTotalTimeEl.textContent = totalTime || 0;
 
-		  answerStatus.textContent = `Quiz Completed! You scored ${score} out of ${total * 15} points.`;
-		  const scoreboardTitle = document.getElementById('scoreboard-title');
-		  if (scoreboardTitle) scoreboardTitle.textContent = "Exam Completed Successfully";
-		});
-	
-
-    socket.on('answer_confirmed', ({ isCorrect } = {}) => {
-      if (isCorrect === true) {
-        answerStatus.textContent = 'Correct Answer';
-        playSoundEffect(correctSfx);
-        if (selectedBtnRef) {
-          selectedBtnRef.style.backgroundColor = '#16a34a';
-          selectedBtnRef.style.color = '#fff';
-          selectedBtnRef.style.borderColor = '#16a34a';
-        }
-      } else if (isCorrect === false) {
-        answerStatus.textContent = 'Incorrect Answer';
-        playSoundEffect(wrongSfx);
-        if (selectedBtnRef) {
-          selectedBtnRef.style.backgroundColor = '#dc2626';
-          selectedBtnRef.style.color = '#fff';
-          selectedBtnRef.style.borderColor = '#dc2626';
-        }
-      }
+      answerStatus.textContent = `Quiz Completed! You scored ${score} out of ${total * 15} points.`;
+      const scoreboardTitle = document.getElementById('scoreboard-title');
+      if (scoreboardTitle) scoreboardTitle.textContent = "Exam Completed Successfully";
     });
 
     socket.on('answer_feedback', ({ correct, score, earned }) => {
@@ -682,37 +663,6 @@
       if (!paperInterval) { timerDisplay.textContent = timeLeft; }
     });
 
-    socket.on('leaderboard_data', (leaderboard) => {
-      if (paperInterval) clearInterval(paperInterval);
-      if (paperTimerContainer) paperTimerContainer.classList.add('hidden');
-
-      questionBox.classList.add('hidden');
-      waitingBox.classList.add('hidden');
-      scoreboardBox.classList.remove('hidden');
-
-      const manualNotice = document.getElementById('manual-wait-notice');
-      if (manualNotice) {
-        manualNotice.classList.toggle('hidden', roomGameMode !== 'manual');
-      }
-
-      const me = leaderboard.find(p => p.id === socket.id);
-      if (me) {
-        const myScoreEl = document.getElementById('my-score');
-        if (myScoreEl) myScoreEl.textContent = me.score;
-      }
-
-      scoreList.innerHTML = leaderboard.map((p, index) => {
-        const isMe = p.id === socket.id;
-        return `
-          <li style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; margin: 4px 0; border-radius: 4px; ${isMe ? 'font-weight: 600; background: #e0f2fe; border: 1px solid #7dd3fc;' : 'background: #f8fafc;'}">
-            <span><strong>#${index + 1}</strong> ${p.name} ${isMe ? '(You)' : ''}</span>
-            <span><strong>${p.score}</strong> pts</span>
-          </li>
-        `;
-      }).join('');
-    });
-
-    // End-of-quiz listener showing participant rank, score, total time, and top 1, 2, 3 podium
     socket.on('participant_final_results', (leaderboard) => {
       if (paperInterval) clearInterval(paperInterval);
       if (paperTimerContainer) paperTimerContainer.classList.add('hidden');
@@ -724,7 +674,7 @@
       const manualNotice = document.getElementById('manual-wait-notice');
       if (manualNotice) manualNotice.classList.add('hidden');
 
-      const myIndex = leaderboard.findIndex(p => p.id === socket.id);
+      const myIndex = leaderboard.findIndex(p => p.id === socket.id || p.name === currentPlayerName);
       const me = leaderboard[myIndex] || { score: 0, totalTime: 0 };
 
       const myScoreEl = document.getElementById('my-score');
@@ -734,10 +684,14 @@
       if (myTotalTimeEl) myTotalTimeEl.textContent = me.totalTime || 0;
 
       const scoreboardTitle = document.getElementById('scoreboard-title');
-      if (scoreboardTitle) scoreboardTitle.textContent = `🎉 Assessment Finished: Rank #${myIndex + 1} 🎉`;
+      if (scoreboardTitle) {
+        scoreboardTitle.textContent = myIndex >= 0
+          ? `🎉 Assessment Finished: Rank #${myIndex + 1} 🎉`
+          : '🎉 Assessment Finished 🎉';
+      }
 
       scoreList.innerHTML = leaderboard.map((p, index) => {
-        const isMe = p.id === socket.id;
+        const isMe = p.id === socket.id || p.name === currentPlayerName;
         let rankBadge = `#${index + 1}`;
         if (index === 0) rankBadge = '🥇 1st';
         if (index === 1) rankBadge = '🥈 2nd';
